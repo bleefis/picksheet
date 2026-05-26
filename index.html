@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  FOUR SEASONS ORDER — Weekly Produce & Dairy Pick Sheet PWA
+================================================================================
+
+  OVERVIEW
+  --------
+  A mobile-first Progressive Web App (PWA) used weekly at the grocery store
+  to count case quantities for ordering. Walk the aisles, tap item circles to
+  increment quantities, then email the completed order to yourself for upload
+  to the distributor portal.
+
+  The app is a single self-contained HTML file with no build step, no framework,
+  and no backend. All state lives in the browser's localStorage.
+
+  WORKFLOW
+  --------
+  1. Open app from phone home screen icon (installed as a PWA via Chrome).
+  2. Page 1 — Seasonal Produce: tap circles to set quantities, tap Next.
+  3. Page 2 — Produce List: same, tap Next.
+  4. Page 3 — Meat & Dairy: same, tap "Email Order".
+  5. Gmail opens with both order lists pasted in the body (plain text, CSV format).
+     - Seasonal + Produce are one block (uploaded together in the portal).
+     - Meat & Dairy is a separate block (uploaded separately in the portal).
+  6. Quantities reset to zero automatically after emailing.
+
+  INTERACTION — QUANTITY CIRCLES (right side of each row)
+  -------------------------------------------------------
+  • Tap once       → increment quantity by 1
+  • Hold 1 second  → reset quantity to 0 (haptic vibration confirms)
+  • Only the circle is a tap target — the rest of the row scrolls freely
+
+  CONFIGURATION (gear icon, top-right)
+  ------------------------------------
+  • Edit item name and distributor Item ID inline
+  • Drag the ≡ handle to reorder items within a section
+  • "+ Add item" appends a new blank row
+  • Trash icon deletes a row
+  • Item IDs are OPTIONAL for Seasonal Produce (they change seasonally)
+  • "Backup Config" downloads items + IDs as JSON — save this somewhere safe
+  • "Restore Backup" imports a previously saved JSON backup
+  • "Save config" commits changes; "Cancel" reverts to last saved state
+
+  CSV / EMAIL FORMAT
+  ------------------
+  Each section outputs plain-text CSV in the email body:
+    ItemID,Quantity,ItemName
+    236006,3,Avocados
+    8104,2,Bananas
+    ...
+  Items with quantity 0 are omitted. Blank ItemID = empty field (seasonal items).
+
+  STORAGE KEYS (localStorage)
+  ---------------------------
+  • "order_items_v3" — JSON array of item config per section (names + IDs)
+  • "order_qty_v2"   — JSON object of current quantities per section
+  Bumping either version key causes the app to fall back to DEFAULTS on next load.
+
+  DEPLOYMENT
+  ----------
+  Host as static files. Requires:
+    index.html    — this file
+    manifest.json — PWA manifest (name, icons, display:standalone)
+    sw.js         — service worker for offline caching
+    icon-192.png  — home screen icon (192×192)
+    icon-512.png  — home screen icon (512×512)
+
+  Deployed at: https://lucky-kashata-294072.netlify.app
+  To update: replace index.html in the Netlify folder and re-drop on netlify.com/drop
+
+  ADDING/CHANGING ITEMS
+  ---------------------
+  Option A (preferred): Use the in-app gear icon to edit, then tap "Backup Config"
+    to save the JSON. This is portable and survives app code updates.
+  Option B: Edit the DEFAULTS constant below directly, then bump KEY_ITEMS version
+    (e.g. 'order_items_v4') so existing installs pick up the new defaults.
+
+  EMAIL TARGET
+  ------------
+  hardcoded to: highlandrootsmkt@gmail.com
+  To change: search "highlandrootsmkt" in this file and replace.
+
+  DEPENDENCIES
+  ------------
+  • Google Fonts — DM Serif Display + DM Sans (loaded from fonts.googleapis.com)
+  • No npm, no bundler, no framework. Vanilla HTML/CSS/JS only.
+
+================================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<meta name="theme-color" content="#1e3a2f"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Order"/>
+<title>Four Seasons Order</title>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="icon-192.png"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   All colors, radii, and spacing defined as CSS variables.
+   ============================================================ */
+:root {
+  --bg:         #f4f1ea;   /* warm off-white page background */
+  --surface:    #ffffff;   /* card / panel background */
+  --green:      #1e3a2f;   /* primary brand green (header, buttons) */
+  --green-mid:  #2d5c45;
+  --green-lt:   #e2efe8;   /* active badge fill */
+  --green-dk:   #122418;   /* header progress bar background */
+  --accent:     #4caf7d;   /* progress fill, hold ring, add-item text */
+  --ink:        #1a1a18;   /* primary text */
+  --muted:      #6b6960;   /* secondary text, placeholders */
+  --border:     rgba(0,0,0,0.09);
+  --border-md:  rgba(0,0,0,0.15);
+  --danger:     #b03a2e;
+  --radius:     14px;
+  --radius-sm:  8px;
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent; /* suppress blue flash on tap */
+  overscroll-behavior: none;                /* prevent pull-to-refresh interfering */
+}
+
+/* ============================================================
+   LAYOUT — full-height flex column with fixed header + footer
+   ============================================================ */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  /* respect notch / home-bar safe areas on iPhone and Android */
+  padding:
+    env(safe-area-inset-top, 0px)
+    env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.header {
+  background: var(--green);
+  padding: 16px 18px 14px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.header-left h1 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+  font-weight: 400;
+  color: #fff;
+  line-height: 1;
+}
+.header-left .sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+}
+/* Gear icon button — opens config page */
+.icon-btn {
+  background: rgba(255,255,255,0.12);
+  border: none;
+  border-radius: 8px;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  touch-action: manipulation;
+}
+.icon-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn:active { opacity: 0.6; }
+
+/* ============================================================
+   PROGRESS BAR (3 steps: Seasonal → Produce → Meat & Dairy)
+   Hidden while config page is open.
+   ============================================================ */
+.progress-wrap { background: var(--green-dk); padding: 10px 18px; flex-shrink: 0; }
+.progress-steps { display: flex; gap: 6px; align-items: center; }
+.step { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); transition: background 0.3s; }
+.step.done   { background: var(--accent); }
+.step.active { background: rgba(255,255,255,0.7); }
+.step-labels { display: flex; margin-top: 5px; }
+.step-label  { flex: 1; font-size: 10px; color: rgba(255,255,255,0.5); text-align: center; letter-spacing: 0.03em; }
+.step-label.active { color: rgba(255,255,255,0.9); font-weight: 600; }
+.step-label.done   { color: var(--accent); }
+
+/* ============================================================
+   SCROLLABLE BODY — sits between fixed header and fixed footer
+   ============================================================ */
+.scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 13px 110px; /* bottom padding clears the fixed footer */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Section title card at top of each order page */
+.section-intro { background: var(--green); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; color: #fff; }
+.section-intro h2 { font-family: 'DM Serif Display', serif; font-size: 18px; font-weight: 400; }
+.section-intro p  { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 3px; }
+
+/* ============================================================
+   ITEM LIST ROWS
+   Each row: [item name + ID] [hold-ring] [qty circle]
+   Only the qty circle (badge) is a tap target — the row itself
+   is NOT interactive so the user can scroll without triggering taps.
+   ============================================================ */
+.items-card { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); overflow: hidden; margin-bottom: 14px; }
+.item-row   { display: flex; align-items: center; padding: 3px 8px 3px 14px; border-bottom: 0.5px solid var(--border); position: relative; min-height: 42px; }
+.item-row:last-child { border-bottom: none; }
+
+.item-info { flex: 1; min-width: 0; }
+.item-name { font-size: 14px; color: var(--ink); line-height: 1.2; pointer-events: none; user-select: none; }
+.item-id   { font-size: 10px; color: var(--muted); margin-top: 1px; pointer-events: none; user-select: none; }
+
+/* ── Quantity badge (the only tappable element per row) ── */
+.qty-badge {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation; /* removes 300ms tap delay without blocking scroll */
+  user-select: none; -webkit-user-select: none;
+  outline: 8px solid transparent; /* invisible extra tap padding */
+  transition: background 0.12s, border-color 0.12s, transform 0.15s cubic-bezier(0.34,1.56,0.64,1);
+  background: #ece9e2;
+  color: var(--muted);
+  border: 1.5px solid transparent;
+  flex-shrink: 0;
+  position: relative;
+}
+.qty-badge.active { background: var(--green-lt); color: var(--green-dk); border-color: #9fcfb8; transform: scale(1.08); }
+.qty-badge:active  { opacity: 0.7; }
+.qty-badge.bump    { animation: bump 0.18s cubic-bezier(0.34,1.56,0.64,1); }
+@keyframes bump { 0%{transform:scale(1.08)} 50%{transform:scale(1.4)} 100%{transform:scale(1.08)} }
+
+/* ── Hold-to-reset progress ring (animates over 0.9s on long-press) ── */
+.hold-ring {
+  position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+  width: 42px; height: 42px; border-radius: 50%;
+  pointer-events: none; opacity: 0;
+}
+.hold-ring svg    { transform: rotate(-90deg); width: 42px; height: 42px; }
+.hold-ring circle { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 118; stroke-dashoffset: 118; stroke-linecap: round; transition: none; }
+.hold-ring.animating           { opacity: 1; }
+.hold-ring.animating circle    { transition: stroke-dashoffset 0.9s linear; stroke-dashoffset: 0; }
+
+/* ============================================================
+   FIXED FOOTER — Back / Next / Email buttons
+   ============================================================ */
+.footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--bg);
+  border-top: 0.5px solid var(--border-md);
+  padding: 10px 13px calc(10px + env(safe-area-inset-bottom, 0px));
+  display: flex; gap: 9px;
+  z-index: 5;
+}
+.btn {
+  flex: 1; padding: 13px 10px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border-md);
+  background: var(--surface);
+  font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; color: var(--ink);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: opacity 0.1s, transform 0.1s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.btn:active   { opacity: 0.7; transform: scale(0.97); }
+.btn.primary  { background: var(--green); border-color: var(--green); color: #fff; flex: 1.5; }
+.btn.secondary{ color: var(--muted); }
+
+/* ============================================================
+   TOAST — brief confirmation message (bottom of screen)
+   ============================================================ */
+.toast {
+  position: fixed; bottom: 90px; left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: var(--ink); color: #fff;
+  font-size: 13px; font-weight: 500;
+  padding: 8px 18px; border-radius: 999px;
+  opacity: 0; transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none; white-space: nowrap; z-index: 20;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================================================
+   MODAL BOTTOM SHEET — confirmation dialogs
+   ============================================================ */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 30; display: flex; align-items: flex-end; padding: 0;
+  animation: fadeIn 0.15s ease;
+}
+@keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+@keyframes slideUp { from{transform:translateY(60px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+.modal-sheet {
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 22px 18px calc(22px + env(safe-area-inset-bottom, 0px));
+  width: 100%; max-height: 90dvh; overflow-y: auto;
+  animation: slideUp 0.22s cubic-bezier(0.34,1.2,0.64,1);
+}
+.modal-sheet h2 { font-family: 'DM Serif Display', serif; font-size: 20px; font-weight: 400; margin-bottom: 6px; }
+.modal-sheet p  { font-size: 14px; color: var(--muted); line-height: 1.55; margin-bottom: 4px; }
+
+.modal-btns { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; }
+.modal-btns button {
+  width: 100%; padding: 13px;
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500;
+  cursor: pointer; border: 1.5px solid var(--border-md); background: var(--surface); color: var(--ink);
+  touch-action: manipulation;
+}
+.modal-btns button:active { opacity: 0.7; }
+.m-primary { background: var(--green)!important; border-color: var(--green)!important; color: #fff!important; }
+.m-danger  { color: var(--danger)!important; border-color: rgba(176,58,46,0.25)!important; }
+.m-muted   { color: var(--muted)!important; }
+
+/* ============================================================
+   CONFIG PAGE — item editor with drag-to-reorder
+   ============================================================ */
+.config-wrap           { padding: 14px 13px calc(90px + env(safe-area-inset-bottom, 0px)); }
+.config-section        { margin-bottom: 20px; }
+.config-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.config-section-title  { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.add-btn               { font-size: 12px; font-weight: 600; color: var(--accent); background: none; border: none; cursor: pointer; padding: 4px 0; touch-action: manipulation; }
+
+.config-card  { background: var(--surface); border-radius: var(--radius); border: 0.5px solid var(--border); overflow: visible; }
+.config-row   { display: flex; align-items: center; padding: 8px 10px; border-bottom: 0.5px solid var(--border); gap: 8px; }
+.config-row:last-child { border-bottom: none; }
+
+/* Drag handle — touch-action:none isolates it from scroll so pointer events fire */
+.drag-handle     { color: var(--muted); flex-shrink: 0; cursor: grab; padding: 4px; touch-action: none; }
+.drag-handle svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+
+.config-fields       { flex: 1; display: flex; gap: 6px; min-width: 0; }
+.config-input        { border: none; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--ink); outline: none; min-width: 0; }
+.config-input.name-input { flex: 1.6; }
+.config-input.id-input   { flex: 1; color: var(--muted); }
+.config-input::placeholder { color: #c0bdb5; }
+
+.delete-btn      { background: none; border: none; cursor: pointer; color: #c0bdb5; flex-shrink: 0; padding: 4px; touch-action: manipulation; }
+.delete-btn svg  { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.delete-btn:active { color: var(--danger); }
+
+/* Visual states during drag */
+.config-row.is-dragging { opacity: 0.35; background: var(--green-lt); }
+.drag-placeholder       { height: 42px; border: 2px dashed var(--accent); border-radius: 6px; background: rgba(76,175,125,0.07); margin: 2px 0; pointer-events: none; }
+
+.config-hint { font-size: 11px; color: var(--muted); margin: 6px 2px 0; line-height: 1.5; }
+
+/* Backup / Restore buttons at top of config page */
+.backup-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.backup-btn {
+  flex: 1; padding: 10px;
+  border-radius: var(--radius-sm); border: 1.5px solid var(--border-md);
+  background: var(--surface);
+  font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: var(--muted);
+  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;
+  touch-action: manipulation;
+}
+.backup-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.backup-btn.export-cfg { color: var(--green); border-color: rgba(30,58,47,0.25); }
+.backup-btn:active { opacity: 0.6; }
+</style>
+</head>
+
+<body>
+<div class="app" id="app">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <div class="header-left">
+      <h1>Four Seasons Order</h1>
+      <div class="sub" id="header-sub">Weekly pick sheet</div>
+    </div>
+    <div class="header-right">
+      <!-- Gear icon toggles config page -->
+      <button class="icon-btn" id="config-btn" title="Configure items">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── 3-step progress bar (hidden in config mode) ── -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-steps">
+      <div class="step" id="step-0"></div>
+      <div class="step" id="step-1"></div>
+      <div class="step" id="step-2"></div>
+    </div>
+    <div class="step-labels">
+      <div class="step-label" id="slabel-0">Seasonal</div>
+      <div class="step-label" id="slabel-1">Produce</div>
+      <div class="step-label" id="slabel-2">Meat &amp; Dairy</div>
+    </div>
+  </div>
+
+  <!-- ── Main content area (order pages or config page rendered here) ── -->
+  <div class="scroll-body" id="main-body"></div>
+
+  <!-- ── Footer buttons rendered dynamically per page ── -->
+  <div class="footer" id="main-footer"></div>
+
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<!-- Modal bottom sheets rendered here -->
+<div id="modal-root"></div>
+
+
+<script>
+'use strict';
+
+// ============================================================
+//  ITEM DEFAULTS
+//  Pre-populated from the Four Seasons distributor pick sheet.
+//  IDs sourced from distributor portal as of May 2026.
+//
+//  To update items permanently: edit here AND bump KEY_ITEMS
+//  version string (e.g. 'order_items_v4') so existing installs
+//  on phones reload from these new defaults.
+//
+//  Alternatively, use the in-app gear → "Backup Config" to export
+//  the current live config as JSON, edit it, and "Restore Backup".
+//
+//  Seasonal IDs are left blank where the distributor assigns
+//  new IDs each season — fill these in via the config page.
+// ============================================================
+const DEFAULTS = {
+  seasonal: [
+    {name:"Apples",              id:"226624"}, {name:"Apricots",                   id:""},
+    {name:"Asparagus",           id:"40325"},  {name:"Blackberries",               id:""},
+    {name:"Blueberries",         id:"43708"},  {name:"Brussels Sprouts",           id:"231119"},
+    {name:"Cantaloupe",          id:"43692"},  {name:"Cherries",                   id:""},
+    {name:"Corn",                id:""},       {name:"Cucumber Euro",              id:"41080"},
+    {name:"Eggplant",            id:""},       {name:"Grapefruit",                 id:"44257"},
+    {name:"Grapes",              id:""},       {name:"Kiwi",                       id:""},
+    {name:"Mangos",              id:""},       {name:"Nectarines",                 id:""},
+    {name:"Oranges",             id:""},       {name:"Peaches",                    id:""},
+    {name:"Pears",               id:""},       {name:"Persimmons",                 id:""},
+    {name:"Plums",               id:""},       {name:"Pomegranate",                id:""},
+    {name:"Potato Red",          id:"41632"},  {name:"Potato Gold",                id:"41647"},
+    {name:"Potato Russet",       id:"41600"},  {name:"Raspberries",                id:""},
+    {name:"Squash",              id:""},       {name:"Strawberries",               id:"43681"},
+    {name:"Sweet Potato Garnet/Jewel", id:""},{name:"Sweet Potato Purple/Orange", id:""},
+    {name:"Tangerine",           id:""},       {name:"Watermelon",                 id:""}
+  ],
+  produce: [
+    {name:"Avocados",                 id:"236006"}, {name:"Pistachios",              id:"17991"},
+    {name:"Salad Baby Crisp",         id:"233150"}, {name:"Bananas",                 id:"8104"},
+    {name:"Beans Green",              id:"222825"}, {name:"Beets Perfectly Pickled", id:"233558"},
+    {name:"Broccoli Florets",         id:"222819"}, {name:"Cabbage Green",           id:"40548"},
+    {name:"Carrots 2lb",              id:"40595"},  {name:"Cauliflower Florets",     id:"236898"},
+    {name:"Celery Hearts",            id:"41066"},  {name:"Coconut Chunks",          id:"227198"},
+    {name:"Cucumbers Mini Seedless",  id:"40235"},  {name:"Date Roll Coconut",       id:"45018"},
+    {name:"Garlic Bulbs in Bag",      id:"244100"}, {name:"Garlic Minced Jar",       id:"236749"},
+    {name:"Ginger Bag",               id:"48135"},  {name:"Juice Lemon",             id:"46019"},
+    {name:"Juice Lime",               id:"46025"},  {name:"Lettuce Romaine Hearts",  id:"41185"},
+    {name:"Mushroom Baby Bella",      id:"40714"},  {name:"Mushroom Shiitake",       id:"40721"},
+    {name:"Mushroom White",           id:"40715"},  {name:"Onions Red",              id:"41515"},
+    {name:"Onions Sweet",             id:"40172"},  {name:"Peppers Green",           id:"46805"},
+    {name:"Salad Arugula",            id:"242987"}, {name:"Salad Spinach",           id:"41391"},
+    {name:"Salad Spring Mix 1lb",     id:"229614"}, {name:"Salad Sweet Mix Lettuce", id:"41399"},
+    {name:"Shallots",                 id:"2185"},   {name:"Tofu",                    id:"214275"},
+    {name:"Tomatoes Beefsteak",       id:"41372"},  {name:"Tomatoes Cherry OTV",     id:"42354"},
+    {name:"Tomatoes Cherry Clamshell",id:"41346"}
+  ],
+  meat: [
+    {name:"Bacon Sunday",              id:"69174"},  {name:"Ham Black Forest Slice",       id:"242548"},
+    {name:"Jerky Beef Original",       id:"236208"}, {name:"Jerky Beef Pepper",            id:"236211"},
+    {name:"Jerky Beef Teriyaki",       id:"236212"}, {name:"Kombucha Gingerade",           id:"225047"},
+    {name:"Kombucha Gingerberry",      id:"225050"}, {name:"Kombucha Guava",               id:"225052"},
+    {name:"Kombucha Trilogy",          id:"225048"}, {name:"Pepperoni",                    id:"247753"},
+    {name:"Sausage Chicken",           id:"69811"},  {name:"Snack Sticks Beef Jalapeno",   id:"236205"},
+    {name:"Snack Sticks Beef Original",id:"236202"}, {name:"Snack Sticks Beef Swt&Spcy",   id:"236204"},
+    {name:"Turkey Oven Roasted",       id:"60713"},  {name:"Whipped Cream Can",            id:"45753"},
+    {name:"Beef Ribeye Steak",         id:"239087"}, {name:"Butter Salted",                id:"243618"},
+    {name:"Buttermilk",                id:"231859"}, {name:"Cheese Camembert",             id:"234433"},
+    {name:"Cheese Classic Jack",       id:"234431"}, {name:"Cheese Cottage",               id:"231855"},
+    {name:"Cheese Cream Cheese",       id:"231201"}, {name:"Cheese Feta",                  id:"45514"},
+    {name:"Cheese Mexican Shred",      id:"45617"},  {name:"Cheese Mozzarella",            id:"234432"},
+    {name:"Cheese Parmesan Shred",     id:"45515"},  {name:"Cheese Provolone",             id:"69257"},
+    {name:"Cheese Ricotta",            id:"45743"},  {name:"Chicken BLSL Breast",          id:"235214"},
+    {name:"Chicken BLSL Thighs",       id:"235217"}, {name:"Chicken Breast Roasted",       id:"45633"},
+    {name:"Chicken Whole Bird COV",    id:"235213"}, {name:"Cream Half and Half Pint (16 oz)", id:"231590"},
+    {name:"Cream Heavy Quart (32 oz)", id:"44694"},  {name:"Cream Heavy Pint (16 oz)",     id:"45752"},
+    {name:"Dip French Onion",          id:"231858"}, {name:"Ginger Carrots Hawthorne",     id:"48171"},
+    {name:"Hotdogs",                   id:"45638"},  {name:"Orange Juice",                 id:"242792"},
+    {name:"Kefir",                     id:"231851"}, {name:"Kim Chi",                      id:"48172"},
+    {name:"Milk Whole 6/64 oz",        id:"45714"},  {name:"Milk Whole 2/128 oz",          id:"45732"},
+    {name:"Salami",                    id:"44971"},  {name:"Sauerkraut Garlic Dill",       id:"236116"},
+    {name:"Sauerkraut Plain (Original)",id:"48174"}, {name:"Sour Cream",                   id:"231857"},
+    {name:"Yogurt Cream Top Vanilla",  id:"235107"}, {name:"Yogurt Greek Plain",           id:"45842"},
+    {name:"Yogurt Plain",              id:"44675"}
+  ]
+};
+
+// Section keys, display labels, and order-page subtitles
+const SECTION_KEYS   = ['seasonal', 'produce', 'meat'];
+const SECTION_LABELS = ['Seasonal Produce', 'Produce List', 'Meat & Dairy'];
+const SECTION_DESCS  = [
+  'Item IDs are optional — seasonal IDs change each season.',
+  'Standard produce items with fixed distributor IDs.',
+  'Exports as a separate order block in the email.'
+];
+
+// localStorage keys — bump version suffix to reset all installs to DEFAULTS
+const KEY_ITEMS = 'order_items_v3'; // item names + IDs per section
+const KEY_QTY   = 'order_qty_v2';  // current week's quantities
+
+// Email recipient — change here to redirect order emails
+const ORDER_EMAIL = 'highlandrootsmkt@gmail.com';
+
+
+// ============================================================
+//  APP STATE
+// ============================================================
+let items       = {};    // { seasonal:[{name,id},...], produce:[...], meat:[...] }
+let qty         = {};    // { seasonal:{'Apples':2,...}, produce:{...}, meat:{...} }
+let currentPage = 0;     // 0=seasonal, 1=produce, 2=meat
+let showConfig  = false; // true when config editor is open
+
+
+// ============================================================
+//  PERSISTENCE
+// ============================================================
+function loadState() {
+  try { const s = localStorage.getItem(KEY_ITEMS); if (s) items = JSON.parse(s); } catch(e) {}
+  try { const s = localStorage.getItem(KEY_QTY);   if (s) qty   = JSON.parse(s); } catch(e) {}
+  // Fill any missing sections with defaults
+  SECTION_KEYS.forEach(k => {
+    if (!items[k]) items[k] = JSON.parse(JSON.stringify(DEFAULTS[k]));
+    if (!qty[k])   qty[k]   = {};
+  });
+}
+
+function saveItems() {
+  try { localStorage.setItem(KEY_ITEMS, JSON.stringify(items)); } catch(e) {}
+}
+
+function saveQty() {
+  try { localStorage.setItem(KEY_QTY, JSON.stringify(qty)); } catch(e) {}
+}
+
+
+// ============================================================
+//  HEADER & PROGRESS BAR
+// ============================================================
+function renderProgress() {
+  SECTION_KEYS.forEach((k, i) => {
+    document.getElementById('step-'   + i).className = 'step'       + (i < currentPage ? ' done' : i === currentPage ? ' active' : '');
+    document.getElementById('slabel-' + i).className = 'step-label' + (i < currentPage ? ' done' : i === currentPage ? ' active' : '');
+  });
+  document.getElementById('header-sub').textContent   = showConfig ? 'Configure items' : SECTION_LABELS[currentPage];
+  document.getElementById('progress-wrap').style.display = showConfig ? 'none' : '';
+}
+
+
+// ============================================================
+//  ORDER PAGE — quantity entry for one section
+// ============================================================
+
+// Stable DOM IDs for badge and ring elements
+function badgeId(sec, name) { return 'b_' + sec + '_' + name.replace(/\W/g, '_'); }
+function ringId(sec, name)  { return 'r_' + sec + '_' + name.replace(/\W/g, '_'); }
+
+function renderOrderPage() {
+  const sec  = SECTION_KEYS[currentPage];
+  const body = document.getElementById('main-body');
+  body.innerHTML = '';
+
+  // Section intro banner
+  const intro = document.createElement('div');
+  intro.className = 'section-intro';
+  intro.innerHTML = `<h2>${SECTION_LABELS[currentPage]}</h2><p>${SECTION_DESCS[currentPage]}</p>`;
+  body.appendChild(intro);
+
+  // Item list card
+  const card = document.createElement('div');
+  card.className = 'items-card';
+
+  items[sec].forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+
+    // Left: item name + optional ID display
+    const info = document.createElement('div');
+    info.className = 'item-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'item-name';
+    nameEl.textContent = item.name;
+    info.appendChild(nameEl);
+    if (item.id) {
+      const idEl = document.createElement('div');
+      idEl.className = 'item-id';
+      idEl.textContent = '#' + item.id;
+      info.appendChild(idEl);
+    }
+
+    // Hold-progress ring (SVG circle, animates on long-press)
+    const ring = document.createElement('div');
+    ring.className = 'hold-ring';
+    ring.id = ringId(sec, item.name);
+    ring.innerHTML = `<svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="17.8"/></svg>`;
+
+    // Quantity badge — THE ONLY TAP TARGET in this row
+    const badge = document.createElement('div');
+    badge.className = 'qty-badge';
+    badge.id = badgeId(sec, item.name);
+    badge.setAttribute('role', 'button');
+    badge.setAttribute('tabindex', '0');
+    badge.setAttribute('aria-label', `${item.name}, tap to add, hold to reset`);
+    const q = qty[sec][item.name] || 0;
+    badge.textContent = q || '—';
+    if (q > 0) badge.classList.add('active');
+
+    row.appendChild(info);
+    row.appendChild(ring);
+    row.appendChild(badge);
+    card.appendChild(row);
+
+    attachBadgeInteraction(badge, ring, sec, item.name);
+  });
+
+  body.appendChild(card);
+  renderFooter();
+}
+
+/**
+ * Attaches tap-to-increment and hold-to-reset interaction to a badge element.
+ * Touch events are passive on touchstart (allowing page scroll) but the tap
+ * logic is cancelled if touchcancel fires (i.e. the user is scrolling).
+ */
+function attachBadgeInteraction(badge, ring, sec, name) {
+  let holdTimer = null;
+  let didHold   = false;
+
+  function startPress() {
+    didHold = false;
+    ring.classList.add('animating');
+    holdTimer = setTimeout(() => {
+      didHold = true;
+      qty[sec][name] = 0;
+      refreshBadge(sec, name);
+      saveQty();
+      if (navigator.vibrate) navigator.vibrate(60); // haptic confirmation
+      ring.classList.remove('animating');
+    }, 900);
+  }
+
+  function cancelPress() {
+    clearTimeout(holdTimer);
+    ring.classList.remove('animating');
+    didHold = false;
+  }
+
+  function endPress() {
+    clearTimeout(holdTimer);
+    ring.classList.remove('animating');
+    if (!didHold) {
+      qty[sec][name] = (qty[sec][name] || 0) + 1;
+      refreshBadge(sec, name, true);
+      saveQty();
+    }
+    didHold = false;
+  }
+
+  // Mouse (desktop/laptop)
+  badge.addEventListener('mousedown',  startPress);
+  badge.addEventListener('mouseup',    endPress);
+  badge.addEventListener('mouseleave', cancelPress);
+
+  // Touch — passive start allows browser to handle scroll gestures;
+  // touchcancel fires automatically if the browser decides user is scrolling
+  badge.addEventListener('touchstart',  () => startPress(),                         {passive: true});
+  badge.addEventListener('touchend',    e  => { e.preventDefault(); endPress(); },  {passive: false});
+  badge.addEventListener('touchcancel', cancelPress);
+
+  // Keyboard accessibility
+  badge.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      qty[sec][name] = (qty[sec][name] || 0) + 1;
+      refreshBadge(sec, name, true);
+      saveQty();
+    }
+  });
+}
+
+/** Update a single badge's text and visual state. bump=true triggers the scale animation. */
+function refreshBadge(sec, name, bump) {
+  const badge = document.getElementById(badgeId(sec, name));
+  if (!badge) return;
+  const q = qty[sec][name] || 0;
+  badge.textContent = q || '—';
+  badge.className   = 'qty-badge' + (q > 0 ? ' active' : '');
+  if (bump && q > 0) {
+    badge.classList.remove('bump');
+    void badge.offsetWidth; // force reflow to re-trigger animation
+    badge.classList.add('bump');
+  }
+}
+
+/** Refresh every badge on the current page (e.g. after reset). */
+function refreshAllBadges() {
+  const sec = SECTION_KEYS[currentPage];
+  items[sec].forEach(item => refreshBadge(sec, item.name));
+}
+
+
+// ============================================================
+//  FOOTER BUTTONS — rendered per page
+// ============================================================
+function renderFooter() {
+  const footer = document.getElementById('main-footer');
+  footer.innerHTML = '';
+
+  // Back button (pages 2 and 3 only)
+  if (currentPage > 0) {
+    const back = document.createElement('button');
+    back.className = 'btn secondary';
+    back.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg> Back`;
+    back.addEventListener('click', () => { currentPage--; renderOrderPage(); renderProgress(); });
+    footer.appendChild(back);
+  }
+
+  if (currentPage < 2) {
+    // Next button (pages 1 and 2)
+    const next = document.createElement('button');
+    next.className = 'btn primary';
+    next.innerHTML = `Next <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>`;
+    next.addEventListener('click', () => { currentPage++; renderOrderPage(); renderProgress(); });
+    footer.appendChild(next);
+  } else {
+    // Email button (page 3 only)
+    const emailBtn = document.createElement('button');
+    emailBtn.className = 'btn primary';
+    emailBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Email Order`;
+    emailBtn.addEventListener('click', showExportSheet);
+    footer.appendChild(emailBtn);
+  }
+}
+
+
+// ============================================================
+//  EXPORT — build order text and open Gmail via mailto
+//
+//  CSV format per line:  ItemID,Quantity,ItemName
+//  Items with qty = 0 are excluded.
+//  Blank ItemID is preserved as an empty field (seasonal items).
+//
+//  The mailto: URI is handled natively by Android — it opens the
+//  Gmail app directly in compose mode with pre-filled recipient,
+//  subject, and body. No backend required.
+//
+//  Two order blocks are sent in one email:
+//    Block 1 — Seasonal + Produce  (uploaded together in the portal)
+//    Block 2 — Meat & Dairy        (uploaded separately in the portal)
+// ============================================================
+
+function buildOrderText(sections) {
+  const rows = ['ItemID,Quantity,ItemName'];
+  sections.forEach(sec => {
+    items[sec].forEach(item => {
+      const q = qty[sec][item.name] || 0;
+      if (q > 0) {
+        const id   = (item.id   || '').replace(/,/g, '');
+        const name = (item.name || '').replace(/,/g, ';');
+        rows.push(`${id},${q},${name}`);
+      }
+    });
+  });
+  return rows.join('\n');
+}
+
+function dateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function showExportSheet() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '';
+
+  const date  = dateStr();
+  const text1 = buildOrderText(['seasonal', 'produce']);
+  const text2 = buildOrderText(['meat']);
+
+  // Item counts for the summary line
+  const totalSP   = ['seasonal','produce'].reduce((n, s) => n + Object.values(qty[s]).filter(v => v > 0).length, 0);
+  const totalMeat = Object.values(qty['meat']).filter(v => v > 0).length;
+
+  const bd    = document.createElement('div');
+  bd.className = 'modal-backdrop';
+  const sheet = document.createElement('div');
+  sheet.className = 'modal-sheet';
+  sheet.innerHTML = `
+    <h2>Email Order</h2>
+    <p><strong>${totalSP}</strong> Seasonal/Produce item${totalSP !== 1 ? 's' : ''} &nbsp;·&nbsp; <strong>${totalMeat}</strong> Meat &amp; Dairy item${totalMeat !== 1 ? 's' : ''}</p>
+    <p style="margin-top:8px;">Both order lists will be pasted into Gmail. Quantities reset after sending.</p>
+    <div class="modal-btns">
+      <button class="m-primary" id="m-send">Open Gmail</button>
+      <button class="m-muted"   id="m-cancel">Cancel</button>
+    </div>`;
+
+  bd.appendChild(sheet);
+  root.appendChild(bd);
+  bd.addEventListener('click', e => { if (e.target === bd) root.innerHTML = ''; });
+  document.getElementById('m-cancel').addEventListener('click', () => root.innerHTML = '');
+
+  document.getElementById('m-send').addEventListener('click', () => {
+    root.innerHTML = '';
+
+    const subject = encodeURIComponent(`Four Seasons Order ${date}`);
+    const body    = encodeURIComponent(
+      `Four Seasons Order — ${date}\n\n` +
+      `=== SEASONAL + PRODUCE ===\n${text1}\n\n` +
+      `=== MEAT & DAIRY ===\n${text2}`
+    );
+    // mailto: is intercepted by Android and opens Gmail app natively
+    window.location.href = `mailto:${ORDER_EMAIL}?subject=${subject}&body=${body}`;
+
+    // Reset all quantities and return to page 1 after a brief delay
+    // (delay lets the mailto: URI dispatch before the DOM re-renders)
+    setTimeout(() => {
+      SECTION_KEYS.forEach(k => { qty[k] = {}; });
+      saveQty();
+      currentPage = 0;
+      renderProgress();
+      renderOrderPage();
+      showToast('Order emailed! Quantities reset.');
+    }, 500);
+  });
+}
+
+
+// ============================================================
+//  TOAST NOTIFICATION
+// ============================================================
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+
+// ============================================================
+//  CONFIG PAGE — edit items, IDs, and order
+// ============================================================
+function renderConfigPage() {
+  const body   = document.getElementById('main-body');
+  const footer = document.getElementById('main-footer');
+  body.innerHTML   = '';
+  footer.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'config-wrap';
+
+  // ── Backup / Restore row ──
+  const backupRow = document.createElement('div');
+  backupRow.className = 'backup-row';
+  backupRow.innerHTML = `
+    <button class="backup-btn export-cfg" id="export-cfg-btn">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Backup config
+    </button>
+    <button class="backup-btn" id="import-cfg-btn">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Restore backup
+    </button>`;
+  wrap.appendChild(backupRow);
+
+  // Wire backup buttons after appending (they're in innerHTML so need setTimeout)
+  setTimeout(() => {
+    document.getElementById('export-cfg-btn').addEventListener('click', exportConfig);
+    document.getElementById('import-cfg-btn').addEventListener('click', importConfig);
+  }, 0);
+
+  // ── One editor card per section ──
+  SECTION_KEYS.forEach((sec, si) => {
+    const section = document.createElement('div');
+    section.className = 'config-section';
+
+    // Section header + Add button
+    const hdr = document.createElement('div');
+    hdr.className = 'config-section-header';
+    hdr.innerHTML = `<span class="config-section-title">${SECTION_LABELS[si]}</span>`;
+    const addBtn = document.createElement('button');
+    addBtn.className   = 'add-btn';
+    addBtn.textContent = '+ Add item';
+    addBtn.addEventListener('click', () => {
+      items[sec].push({name: '', id: ''});
+      renderConfigPage();
+      // Auto-focus the new name field
+      setTimeout(() => {
+        const inputs = document.querySelectorAll('.config-input.name-input');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      }, 50);
+    });
+    hdr.appendChild(addBtn);
+    section.appendChild(hdr);
+
+    // Item rows card
+    const card = document.createElement('div');
+    card.className  = 'config-card';
+    card.dataset.sec = sec;
+    items[sec].forEach((item, idx) => card.appendChild(makeConfigRow(sec, item, idx, card)));
+    section.appendChild(card);
+
+    // Hint for seasonal section
+    if (si === 0) {
+      const hint = document.createElement('div');
+      hint.className   = 'config-hint';
+      hint.textContent = 'Item IDs are optional for Seasonal — leave blank if the distributor hasn\'t assigned one yet for this season.';
+      section.appendChild(hint);
+    }
+
+    wrap.appendChild(section);
+  });
+
+  body.appendChild(wrap);
+
+  // ── Footer: Cancel + Save ──
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn secondary';
+  cancelBtn.innerHTML = `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Cancel`;
+  cancelBtn.addEventListener('click', () => {
+    loadState(); // discard unsaved edits
+    showConfig = false;
+    renderProgress();
+    renderOrderPage();
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn primary';
+  saveBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save config`;
+  saveBtn.addEventListener('click', () => {
+    SECTION_KEYS.forEach(k => { items[k] = items[k].filter(i => i.name.trim() !== ''); });
+    saveItems();
+    showConfig = false;
+    renderProgress();
+    renderOrderPage();
+    showToast('Configuration saved');
+  });
+
+  footer.appendChild(cancelBtn);
+  footer.appendChild(saveBtn);
+}
+
+/** Build one editable row: [drag handle] [name input] [id input] [delete button] */
+function makeConfigRow(sec, item, idx, card) {
+  const row = document.createElement('div');
+  row.className    = 'config-row';
+  row.dataset.idx  = idx;
+  row.dataset.sec  = sec;
+
+  // Drag handle (≡ lines)
+  const handle = document.createElement('div');
+  handle.className = 'drag-handle';
+  handle.setAttribute('aria-label', 'Drag to reorder');
+  handle.innerHTML = `<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/></svg>`;
+
+  // Name + ID inputs
+  const fields = document.createElement('div');
+  fields.className = 'config-fields';
+
+  const nameIn = document.createElement('input');
+  nameIn.className   = 'config-input name-input';
+  nameIn.placeholder = 'Item name';
+  nameIn.value       = item.name;
+  nameIn.addEventListener('input', () => { items[sec][idx].name = nameIn.value; });
+
+  const idIn = document.createElement('input');
+  idIn.className   = 'config-input id-input';
+  idIn.placeholder = sec === 'seasonal' ? 'ID (optional)' : 'Item ID';
+  idIn.value       = item.id;
+  idIn.addEventListener('input', () => { items[sec][idx].id = idIn.value; });
+
+  fields.appendChild(nameIn);
+  fields.appendChild(idIn);
+
+  // Delete button
+  const delBtn = document.createElement('button');
+  delBtn.className = 'delete-btn';
+  delBtn.setAttribute('aria-label', 'Delete item');
+  delBtn.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
+  delBtn.addEventListener('click', () => {
+    items[sec].splice(idx, 1);
+    renderConfigPage();
+  });
+
+  row.appendChild(handle);
+  row.appendChild(fields);
+  row.appendChild(delBtn);
+
+  // Wire pointer-based drag-to-reorder on the handle
+  setupDragHandle(handle, row, card, sec);
+
+  return row;
+}
+
+/**
+ * Pointer-event drag-to-reorder.
+ * Uses touchstart/touchmove/touchend (mobile) and mousedown/mousemove/mouseup (desktop).
+ * HTML5 draggable API was not used — it is unreliable on Android Chrome.
+ *
+ * On drag start: snapshot input values → create floating clone → insert dashed placeholder.
+ * On drag move:  move clone, reposition placeholder to show insertion point.
+ * On drag end:   splice items array at new index → re-render config page.
+ */
+function setupDragHandle(handle, dragRow, card, sec) {
+  let clone       = null;
+  let placeholder = null;
+  let dragging    = false;
+  let rowHeight   = 0;
+  let startOffsetY = 0;
+
+  function getRows() {
+    return Array.from(card.querySelectorAll('.config-row'));
+  }
+
+  function startDrag(clientY, clientX) {
+    dragging = true;
+    const rect = dragRow.getBoundingClientRect();
+    rowHeight    = rect.height;
+    startOffsetY = clientY - rect.top;
+
+    // Save live input values to state before DOM manipulation
+    syncInputsToState(card, sec);
+
+    // Dashed placeholder to show drop target
+    placeholder = document.createElement('div');
+    placeholder.className  = 'drag-placeholder';
+    placeholder.style.height = rowHeight + 'px';
+    dragRow.parentNode.insertBefore(placeholder, dragRow.nextSibling);
+
+    // Floating clone that follows the finger/cursor
+    clone = dragRow.cloneNode(true);
+    Object.assign(clone.style, {
+      position:   'fixed',
+      left:        rect.left + 'px',
+      top:         rect.top  + 'px',
+      width:       rect.width + 'px',
+      zIndex:      '999',
+      boxShadow:   '0 8px 24px rgba(0,0,0,0.18)',
+      borderRadius:'8px',
+      background:  'var(--surface)',
+      opacity:     '0.96',
+      pointerEvents: 'none',
+      transition:  'none'
+    });
+    document.body.appendChild(clone);
+    dragRow.classList.add('is-dragging');
+  }
+
+  function moveDrag(clientY) {
+    if (!dragging || !clone) return;
+    clone.style.top = (clientY - startOffsetY) + 'px';
+
+    // Find the row whose midpoint the dragged clone has crossed, then move placeholder
+    const midY = clientY - startOffsetY + rowHeight / 2;
+    let insertBefore = null;
+    for (const r of getRows()) {
+      if (r === dragRow) continue;
+      const rRect = r.getBoundingClientRect();
+      if (midY < rRect.top + rRect.height / 2) { insertBefore = r; break; }
+    }
+    if (insertBefore) card.insertBefore(placeholder, insertBefore);
+    else              card.appendChild(placeholder);
+  }
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+
+    const oldIdx = parseInt(dragRow.dataset.idx);
+
+    // Determine new index by counting real rows before the placeholder
+    const allChildren  = Array.from(card.children);
+    const phPosition   = allChildren.indexOf(placeholder);
+    const rowsBefore   = allChildren.slice(0, phPosition).filter(el => el.classList.contains('config-row')).length;
+    const newIdx       = rowsBefore > oldIdx ? rowsBefore - 1 : rowsBefore;
+
+    // Reorder in state
+    const moved = items[sec].splice(oldIdx, 1)[0];
+    items[sec].splice(newIdx, 0, moved);
+
+    // Clean up DOM artifacts
+    if (clone)       { clone.remove();       clone       = null; }
+    if (placeholder) { placeholder.remove(); placeholder = null; }
+    dragRow.classList.remove('is-dragging');
+
+    renderConfigPage();
+  }
+
+  // Touch
+  handle.addEventListener('touchstart',  e  => { startDrag(e.touches[0].clientY, e.touches[0].clientX); }, {passive: true});
+  handle.addEventListener('touchmove',   e  => { e.preventDefault(); moveDrag(e.touches[0].clientY); },    {passive: false});
+  handle.addEventListener('touchend',    () => endDrag(), {passive: true});
+  handle.addEventListener('touchcancel', () => endDrag(), {passive: true});
+
+  // Mouse
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startDrag(e.clientY, e.clientX);
+    const onMove = ev => moveDrag(ev.clientY);
+    const onUp   = () => { endDrag(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',   onUp);
+  });
+}
+
+/**
+ * Read current input values from the DOM back into the items[] state.
+ * Must be called before any DOM manipulation (e.g. drag start) that
+ * might cause input values to be lost.
+ */
+function syncInputsToState(card, sec) {
+  card.querySelectorAll('.config-row').forEach(row => {
+    const idx    = parseInt(row.dataset.idx);
+    if (isNaN(idx) || !items[sec][idx]) return;
+    const nameIn = row.querySelector('.name-input');
+    const idIn   = row.querySelector('.id-input');
+    if (nameIn) items[sec][idx].name = nameIn.value;
+    if (idIn)   items[sec][idx].id   = idIn.value;
+  });
+}
+
+
+// ============================================================
+//  CONFIG BACKUP & RESTORE
+//  Backup downloads a JSON file containing all item names and IDs.
+//  Restore loads a previously saved backup JSON.
+//
+//  IMPORTANT: Back up after any significant ID/name changes.
+//  localStorage is device-specific and will be lost if the browser
+//  cache is cleared or a new device is used.
+// ============================================================
+
+function exportConfig() {
+  const json = JSON.stringify({version: 1, exportedAt: new Date().toISOString(), items}, null, 2);
+  const url  = URL.createObjectURL(new Blob([json], {type: 'application/json'}));
+  const a    = Object.assign(document.createElement('a'), {href: url, download: `order-config-backup-${dateStr()}.json`});
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  showToast('Config backup downloaded');
+}
+
+function importConfig() {
+  const input = Object.assign(document.createElement('input'), {type: 'file', accept: '.json,application/json'});
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        if (!parsed.items || !parsed.items.seasonal) throw new Error('Invalid format');
+        items = parsed.items;
+        saveItems();
+        renderConfigPage();
+        showToast('Config restored ✓');
+      } catch {
+        showToast('Error: invalid backup file');
+      }
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+}
+
+
+// ============================================================
+//  GEAR ICON — toggle between order pages and config page
+// ============================================================
+document.getElementById('config-btn').addEventListener('click', () => {
+  showConfig = !showConfig;
+  renderProgress();
+  if (showConfig) renderConfigPage();
+  else            renderOrderPage();
+});
+
+
+// ============================================================
+//  SERVICE WORKER — enables offline use and home screen install
+//  Caches index.html, manifest.json on first load.
+//  See sw.js for cache strategy.
+// ============================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+}
+
+
+// ============================================================
+//  BOOT
+// ============================================================
+loadState();
+renderProgress();
+renderOrderPage();
+
+</script>
+</body>
+</html>
