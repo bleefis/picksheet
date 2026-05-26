@@ -27,8 +27,9 @@
 
   INTERACTION — QUANTITY CIRCLES (right side of each row)
   -------------------------------------------------------
-  • Tap once       → increment quantity by 1
+  • Tap once       → increment quantity by 1 (max 3, then cycles to 0)
   • Hold 1 second  → reset quantity to 0 (haptic vibration confirms)
+  • Tap sequence   → 0 → 1 → 2 → 3 → 0 → 1 → ...
   • Only the circle is a tap target — the rest of the row scrolls freely
 
   CONFIGURATION (gear icon, top-right)
@@ -688,7 +689,9 @@ function attachBadgeInteraction(badge, ring, sec, name) {
     clearTimeout(holdTimer);
     ring.classList.remove('animating');
     if (!didHold) {
-      qty[sec][name] = (qty[sec][name] || 0) + 1;
+      // Cycle: 0 → 1 → 2 → 3 → 0 (max quantity is 3)
+      const current = qty[sec][name] || 0;
+      qty[sec][name] = current >= 3 ? 0 : current + 1;
       refreshBadge(sec, name, true);
       saveQty();
     }
@@ -710,7 +713,8 @@ function attachBadgeInteraction(badge, ring, sec, name) {
   badge.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      qty[sec][name] = (qty[sec][name] || 0) + 1;
+      const current = qty[sec][name] || 0;
+      qty[sec][name] = current >= 3 ? 0 : current + 1;
       refreshBadge(sec, name, true);
       saveQty();
     }
