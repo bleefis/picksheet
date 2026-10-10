@@ -50,9 +50,37 @@ async function signIn(page) {
   await page.locator('input[type="email"], input[name*="mail" i], input[id*="mail" i]').first().fill(env.FS_EMAIL);
   await page.locator('input[type="password"]').first().fill(env.FS_PASSWORD);
   await page.getByRole('button', { name: /next|sign in|log in/i }).first().click();
-  await page.waitForURL(u => !/\/login/i.test(u.pathname), { timeout: 30000 });
-  await page.waitForLoadState('domcontentloaded');
+  await page.waitForURL(u => !/\/login\/?$/i.test(u.pathname), { timeout: 30000 });
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+
+  // The portal allows one session per login. If one is still open it asks first.
+  if (/UserAlreadyLoggedIn/i.test(page.url())) {
+    const text = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+    log(`Portal says already signed in: ${text.slice(0, 400)}`);
+    const go = page.locator('a, button, input[type=submit], input[type=button]')
+      .filter({ hasText: /continue|yes|proceed|log ?in|sign ?in|ok/i });
+    log(`Buttons on that page: ${(await page.locator('a, button, input[type=submit]').allInnerTexts().catch(() => [])).map(t => t.trim()).filter(Boolean).join(' | ').slice(0, 400)}`);
+    if (await go.count()) {
+      await go.first().click();
+      await page.waitForURL(u => !/login/i.test(u.pathname), { timeout: 30000 });
+    } else {
+      await shot(page, 'already-signed-in');
+      throw new Error('Portal says this login is already signed in somewhere else.');
+    }
+  }
   log('Signed in');
+}
+
+/** Sign out so the next run (or andrew) isn't blocked by an open session. */
+async function signOut(page) {
+  const out = page.locator('a, button').filter({ hasText: /log ?out|sign ?out/i });
+  if (await out.count().catch(() => 0)) {
+    await out.first().click().catch(() => {});
+  } else {
+    await page.goto(`${PORTAL}/logout`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+  log(`Signed out (now at ${new URL(page.url()).pathname})`);
 }
 
 /** The "You are working on behalf of" box text, used to confirm the account. */
@@ -187,6 +215,7 @@ async function main() {
     await shot(page, 'failed');
     throw e;
   } finally {
+    await signOut(page).catch(e => log(`Sign out failed: ${e.message}`));
     await browser.close();
   }
 
