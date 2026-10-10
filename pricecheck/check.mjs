@@ -13,7 +13,8 @@
 //   SHOTS_DIR=shots         save a screenshot when something goes wrong
 
 import { chromium } from 'playwright';
-import admin from 'firebase-admin';
+import { initializeApp, cert, deleteApp, getApp } from 'firebase-admin/app';
+import { getDatabase } from 'firebase-admin/database';
 import fs from 'node:fs';
 import { parseRow, buildOptions, lookupFor } from './parse.mjs';
 
@@ -39,8 +40,8 @@ async function shot(page, name) {
 // ── Firebase ───────────────────────────────────────────────
 function initFirebase() {
   const key = JSON.parse(env.FIREBASE_KEY);
-  admin.initializeApp({ credential: admin.credential.cert(key), databaseURL: DATABASE_URL });
-  return admin.database();
+  const app = initializeApp({ credential: cert(key), databaseURL: DATABASE_URL });
+  return getDatabase(app);
 }
 
 // ── Portal ─────────────────────────────────────────────────
@@ -185,7 +186,7 @@ async function main() {
     await db.ref('prices').set(result);
     log('Saved to Firebase /prices');
   }
-  await admin.app().delete();
+  await deleteApp(getApp());
   if (counted === 0) throw new Error('Nothing was checked.');
 }
 
