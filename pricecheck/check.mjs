@@ -106,11 +106,21 @@ async function switchAccount(page, number) {
   const boxButtons = box.locator('a, button, input[type=submit], input[type=button]');
   log(`Change Ship To box: ${boxText.slice(0, 400)}`);
   log(`Its buttons: ${(await boxButtons.allInnerTexts().catch(() => [])).map(t => t.trim()).filter(Boolean).join(' | ')}`);
-  const go = boxButtons.filter({ hasText: /yes|continue|change|select|confirm|ok|switch|proceed/i });
-  if (await go.count()) {
-    await go.first().click();
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  // Never merge carts between the two accounts: make sure "Merge your current items" is off.
+  const merge = box.locator('input[type=checkbox]');
+  for (let i = 0; i < await merge.count(); i++) {
+    if (await merge.nth(i).isChecked().catch(() => false)) await merge.nth(i).uncheck({ force: true });
   }
+  log(`Merge box ticked: ${await merge.first().isChecked().catch(() => 'no box')}`);
+  const go = boxButtons.filter({ hasText: /^\s*continue\s*$/i });
+  if (!(await go.count())) throw new Error(`No Continue button in the Change Ship To box.`);
+  await Promise.all([
+    page.waitForNavigation({ timeout: 20000 }).catch(() => {}),
+    go.first().click()
+  ]);
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+  log(`After Continue: ${new URL(page.url()).pathname}`);
 
   await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
   const now = await currentAccountText(page);
