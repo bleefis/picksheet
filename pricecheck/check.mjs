@@ -1,0 +1,195 @@
+// Daily Four Seasons price check.
+//
+// Reads the shared item list from Firebase, signs in to the Four Seasons
+// portal, looks up this week's options and prices for every item, and
+// saves the results to Firebase under /prices for the phone app to show.
+//
+// Needs these environment variables (GitHub secrets in the workflow):
+//   FS_EMAIL, FS_PASSWORD   Four Seasons portal login
+//   FIREBASE_KEY            Firebase service-account key (the whole JSON)
+// Optional:
+//   DRY_RUN=1               look up prices but don't save them
+//   ONLY=Apples,Grapes      check just these item names (for testing; never saves)
+//   SHOTS_DIR=shots         save a screenshot when something goes wrong
+
+import { chromium } from 'playwright';
+import admin from 'firebase-admin';
+import fs from 'node:fs';
+import { parseRow, buildOptions, lookupFor } from './parse.mjs';
+
+const PORTAL       = 'https://customer.fsproduce.com';
+const DATABASE_URL = 'https://picksheet-8b2a0-default-rtdb.firebaseio.com';
+const ACCOUNTS     = { produce: '94273', meat: '94274' };   // Produce / Meat & Dairy
+const SECTION_ACCOUNT = { seasonal: 'produce', produce: 'produce', meat: 'meat' };
+const MAX_PAGES    = 8;
+
+const env = process.env;
+const ONLY = (env.ONLY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+const DRY_RUN = !!env.DRY_RUN || ONLY.length > 0;   // a partial check must never replace the full price list
+const SHOTS_DIR = env.SHOTS_DIR || '';
+
+function log(...a) { console.log(new Date().toISOString().slice(11, 19), ...a); }
+
+async function shot(page, name) {
+  if (!SHOTS_DIR) return;
+  fs.mkdirSync(SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: `${SHOTS_DIR}/${name}.png`, fullPage: true }).catch(() => {});
+}
+
+// ── Firebase ───────────────────────────────────────────────
+function initFirebase() {
+  const key = JSON.parse(env.FIREBASE_KEY);
+  admin.initializeApp({ credential: admin.credential.cert(key), databaseURL: DATABASE_URL });
+  return admin.database();
+}
+
+// ── Portal ─────────────────────────────────────────────────
+async function signIn(page) {
+  await page.goto(`${PORTAL}/login`, { waitUntil: 'domcontentloaded' });
+  await page.locator('input[type="email"], input[name*="mail" i], input[id*="mail" i]').first().fill(env.FS_EMAIL);
+  await page.locator('input[type="password"]').first().fill(env.FS_PASSWORD);
+  await page.getByRole('button', { name: /next|sign in|log in/i }).first().click();
+  await page.waitForURL(u => !/\/login/i.test(u.pathname), { timeout: 30000 });
+  await page.waitForLoadState('domcontentloaded');
+  log('Signed in');
+}
+
+/** The "You are working on behalf of" box text, used to confirm the account. */
+async function currentAccountText(page) {
+  return page.locator('text=/working on behalf of/i').first()
+    .locator('xpath=ancestor-or-self::*[self::div or self::section][1]')
+    .innerText({ timeout: 5000 }).catch(() => '');
+}
+
+/** Switch to a customer number using the Ship To list. */
+async function switchAccount(page, number) {
+  await page.goto(`${PORTAL}/secure/account/sales-person`, { waitUntil: 'domcontentloaded' });
+  if ((await currentAccountText(page)).includes(number)) { log(`Already on ${number}`); return; }
+  const row = page.locator('tr', { hasText: number }).first();
+  await row.locator('a').first().click().catch(() => row.click());
+  await page.waitForLoadState('domcontentloaded');
+  await page.goto(`${PORTAL}/secure/account/sales-person`, { waitUntil: 'domcontentloaded' });
+  const now = await currentAccountText(page);
+  if (!now.includes(number)) {
+    await shot(page, `switch-${number}`);
+    throw new Error(`Could not switch to customer ${number}. The page says: ${now.slice(0, 200)}`);
+  }
+  log(`Switched to ${number}`);
+}
+
+/** Read every product row on the current results page. */
+async function readRows(page) {
+  const texts = await page.evaluate(() => {
+    const out = [];
+    const buttons = [...document.querySelectorAll('button, a, input[type=button], input[type=submit]')]
+      .filter(b => /add to cart/i.test(b.innerText || b.value || ''));
+    for (const b of buttons) {
+      // Walk up to the element that holds the whole row (code + price).
+      let el = b;
+      while (el && el.parentElement) {
+        el = el.parentElement;
+        const t = el.innerText || '';
+        if (/\b\d{3,7}\b/.test(t) && /\d\.\d{2}\s*\/\s*\d/.test(t)) break;
+      }
+      const isAd = !!el.querySelector('img[alt="AD" i], [title="AD" i]');
+      out.push((el.innerText || '') + (isAd ? ' AD' : ''));
+    }
+    return out;
+  });
+  return texts.map(parseRow).filter(Boolean);
+}
+
+/** All results for a search, following pages until no new items appear. */
+async function search(page, words) {
+  const all = new Map();
+  for (let p = 1; p <= MAX_PAGES; p++) {
+    const url = `${PORTAL}/catalogs/search-results/${p}/?searchMode=All&searchCriteria=${encodeURIComponent(words)}`;
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    const rows = await readRows(page);
+    const fresh = rows.filter(r => !all.has(r.code));
+    fresh.forEach(r => all.set(r.code, r));
+    if (fresh.length === 0) break;
+  }
+  return [...all.values()];
+}
+
+// ── Main ───────────────────────────────────────────────────
+async function main() {
+  for (const k of ['FS_EMAIL', 'FS_PASSWORD', 'FIREBASE_KEY']) {
+    if (!env[k]) throw new Error(`Missing ${k}. Add it under GitHub → Settings → Secrets → Actions.`);
+  }
+  const db = initFirebase();
+  const config = (await db.ref('order-config').get()).val();
+  if (!config || !config.items) throw new Error('No item list in Firebase yet. Open the app once so it uploads its list.');
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  const result = { checkedAt: new Date().toISOString(), sections: {}, problems: [] };
+
+  try {
+    await signIn(page);
+    for (const account of ['produce', 'meat']) {
+      const sections = Object.keys(SECTION_ACCOUNT).filter(s => SECTION_ACCOUNT[s] === account);
+      const items = sections.flatMap(sec => (config.items[sec] || []).map((it, i) => ({ sec, i, it })))
+        .filter(({ it }) => it && it.name && (!ONLY.length || ONLY.includes(it.name.trim().toLowerCase())));
+      if (!items.length) continue;
+
+      await switchAccount(page, ACCOUNTS[account]);
+      for (const { sec, i, it } of items) {
+        result.sections[sec] = result.sections[sec] || [];
+        const entry = { name: it.name, weekly: !!it.weekly };
+        try {
+          if (it.weekly) {
+            const words = lookupFor(it);
+            const rows = await search(page, words);
+            entry.lookup  = words;
+            entry.found   = rows.length;
+            entry.options = buildOptions(rows, it.exclude);
+            log(`${it.name}: ${entry.options.length} options (${rows.length} found for "${words}")`);
+          } else if (it.id) {
+            const rows = await search(page, it.id);
+            const match = rows.find(r => r.code === String(it.id).trim());
+            entry.id = it.id;
+            entry.status = match ? 'ok' : 'not-found';
+            if (match) Object.assign(entry, { description: match.description, casePrice: match.casePrice, onAd: match.onAd });
+            log(`${it.name} #${it.id}: ${entry.status}`);
+          }
+        } catch (e) {
+          entry.error = e.message.slice(0, 200);
+          result.problems.push(`${it.name}: ${entry.error}`);
+          log(`${it.name}: ERROR ${entry.error}`);
+          await shot(page, `error-${sec}-${i}`);
+        }
+        result.sections[sec][i] = entry;
+      }
+    }
+  } catch (e) {
+    await shot(page, 'failed');
+    throw e;
+  } finally {
+    await browser.close();
+  }
+
+  // Firebase can't store sparse arrays cleanly; fill gaps left by ONLY.
+  for (const sec of Object.keys(result.sections)) {
+    result.sections[sec] = Array.from(result.sections[sec], e => e || null);
+  }
+
+  const counted = Object.values(result.sections).flat().filter(Boolean).length;
+  log(`Checked ${counted} items, ${result.problems.length} problems`);
+  if (DRY_RUN) {
+    console.log(JSON.stringify(result.sections, null, 1).slice(0, 20000));
+    log('Dry run: not saving.');
+  } else {
+    await db.ref('prices').set(result);
+    log('Saved to Firebase /prices');
+  }
+  await admin.app().delete();
+  if (counted === 0) throw new Error('Nothing was checked.');
+}
+
+main().catch(err => {
+  console.error('Price check failed:', err.message);
+  process.exit(1);
+});

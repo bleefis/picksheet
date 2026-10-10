@@ -1,0 +1,11 @@
+{
+  "name": "picksheet-pricecheck",
+  "private": true,
+  "type": "module",
+  "description": "Daily Four Seasons price check for the picksheet app",
+  "scripts": { "check": "node check.mjs", "test": "node --test" },
+  "dependencies": {
+    "firebase-admin": "14.4.0",
+    "playwright": "1.63.0"
+  }
+}
