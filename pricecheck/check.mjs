@@ -73,12 +73,11 @@ async function signIn(page) {
 
 /** Sign out so the next run (or andrew) isn't blocked by an open session. */
 async function signOut(page) {
-  const out = page.locator('a, button').filter({ hasText: /log ?out|sign ?out/i });
-  if (await out.count().catch(() => 0)) {
-    await out.first().click().catch(() => {});
-  } else {
-    await page.goto(`${PORTAL}/logout`, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  }
+  const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')]
+    .filter(a => /log.?out|sign.?out|log.?off/i.test(a.href + ' ' + a.textContent))
+    .map(a => a.href));
+  log(`Sign out links: ${links.join(' | ') || 'none found'}`);
+  await page.goto(links[0] || `${PORTAL}/logout`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
   log(`Signed out (now at ${new URL(page.url()).pathname})`);
 }
@@ -97,19 +96,19 @@ async function switchAccount(page, number) {
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   if ((await currentAccountText(page)).includes(number)) { log(`Already on ${number}`); return; }
 
-  // The smallest element whose text holds the number, then whatever is clickable in its row.
-  const target = page.locator(`xpath=//*[contains(normalize-space(text()), "${number}")]`).last();
-  const row = target.locator('xpath=ancestor-or-self::*[self::tr or self::li or contains(@class,"row") or contains(@class,"item")][1]');
-  const clickable = row.locator('a, button, input[type=submit], input[type=button], input[type=radio]');
-  log(`Ship To row for ${number}: ${(await row.innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 200)}`);
-  log(`Clickable in row: ${await clickable.count().catch(() => 0)}`);
-  if (await clickable.count().catch(() => 0)) await clickable.first().click();
-  else await target.click();
-  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-  // Some lists need a confirm button after choosing.
-  const confirm = page.getByRole('button', { name: /select|continue|switch|change|submit|ok/i });
-  if (await confirm.count().catch(() => 0)) {
-    await confirm.first().click().catch(() => {});
+  // Each row in the Ship To table opens a "Change Ship To" box when clicked.
+  const row = page.locator('tr', { has: page.locator(`td:text-is("${number}")`) }).first();
+  log(`Ship To row for ${number}: ${(await row.innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 120)}`);
+  await row.click();
+  const box = page.locator('.modal:visible, [role=dialog]:visible').last();
+  await box.waitFor({ timeout: 15000 }).catch(() => {});
+  const boxText = (await box.innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const boxButtons = box.locator('a, button, input[type=submit], input[type=button]');
+  log(`Change Ship To box: ${boxText.slice(0, 400)}`);
+  log(`Its buttons: ${(await boxButtons.allInnerTexts().catch(() => [])).map(t => t.trim()).filter(Boolean).join(' | ')}`);
+  const go = boxButtons.filter({ hasText: /yes|continue|change|select|confirm|ok|switch|proceed/i });
+  if (await go.count()) {
+    await go.first().click();
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   }
 
@@ -117,8 +116,6 @@ async function switchAccount(page, number) {
   const now = await currentAccountText(page);
   if (!now.includes(number)) {
     await shot(page, `switch-${number}`);
-    const html = await row.evaluate(el => el.outerHTML).catch(() => '');
-    log(`Row HTML: ${html.replace(/\s+/g, ' ').slice(0, 1500)}`);
     throw new Error(`Could not switch to customer ${number}. The page says: ${now.replace(/\s+/g, ' ').slice(0, 200)}`);
   }
   log(`Switched to ${number}`);
