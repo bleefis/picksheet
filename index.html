@@ -378,6 +378,21 @@ html, body {
 .config-row.is-dragging { opacity: 0.35; background: var(--green-lt); }
 .drag-placeholder       { height: 42px; border: 2px dashed var(--accent); border-radius: 6px; background: rgba(76,175,125,0.07); margin: 2px 0; pointer-events: none; }
 
+/* Weekly items: toggle chip + lookup fields on a second line */
+.config-main    { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.weekly-btn {
+  flex-shrink: 0; font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 600;
+  padding: 3px 8px; border-radius: 999px; border: 1.5px solid var(--border-md);
+  background: none; color: var(--muted); cursor: pointer; touch-action: manipulation;
+}
+.weekly-btn[aria-pressed="true"] { background: var(--green-lt); border-color: var(--accent); color: var(--green); }
+.weekly-fields  { display: flex; gap: 6px; min-width: 0; }
+.weekly-fields[hidden] { display: none; }
+.weekly-field   { flex: 1; min-width: 0; }
+.weekly-field label { display: flex; flex-direction: column; font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.weekly-field .config-input { text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--border-md); padding: 2px 0; font-size: 12px; }
+.config-input.id-input:disabled { color: #c0bdb5; }
+
 .config-hint { font-size: 11px; color: var(--muted); margin: 6px 2px 0; line-height: 1.5; }
 
 /* Backup / Restore buttons at top of config page */
@@ -624,8 +639,8 @@ function loadState() {
   // Always load local first for instant startup
   try { const s = localStorage.getItem(KEY_ITEMS); if (s) items = JSON.parse(s); } catch(e) {}
   try { const s = localStorage.getItem(KEY_QTY);   if (s) qty   = JSON.parse(s); } catch(e) {}
+  items = validateItems(items);
   SECTION_KEYS.forEach(k => {
-    if (!items[k]) items[k] = JSON.parse(JSON.stringify(DEFAULTS[k]));
     if (!qty[k])   qty[k]   = {};
   });
 
@@ -1081,7 +1096,7 @@ function renderConfigPage() {
     addBtn.className   = 'add-btn';
     addBtn.textContent = '+ Add item';
     addBtn.addEventListener('click', () => {
-      items[sec].push({name: '', id: ''});
+      items[sec].push(normalizeItem(sec, {}));
       renderConfigPage();
       // Auto-focus the new name field
       setTimeout(() => {
@@ -1103,7 +1118,7 @@ function renderConfigPage() {
     if (si === 0) {
       const hint = document.createElement('div');
       hint.className   = 'config-hint';
-      hint.textContent = 'Item IDs are optional for Seasonal — leave blank if the distributor hasn\'t assigned one yet for this season.';
+      hint.textContent = 'Tap Weekly on items whose varieties and prices change each week. Their item # will come from Four Seasons, so it isn\'t needed here.';
       section.appendChild(hint);
     }
 
@@ -1153,6 +1168,9 @@ function makeConfigRow(sec, item, idx, card) {
   handle.innerHTML = `<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/></svg>`;
 
   // Name + ID inputs
+  const main = document.createElement('div');
+  main.className = 'config-main';
+
   const fields = document.createElement('div');
   fields.className = 'config-fields';
 
@@ -1160,16 +1178,46 @@ function makeConfigRow(sec, item, idx, card) {
   nameIn.className   = 'config-input name-input';
   nameIn.placeholder = 'Item name';
   nameIn.value       = item.name;
-  nameIn.addEventListener('input', () => { items[sec][idx].name = nameIn.value; });
 
   const idIn = document.createElement('input');
   idIn.className   = 'config-input id-input';
-  idIn.placeholder = sec === 'seasonal' ? 'ID (optional)' : 'Item ID';
   idIn.value       = item.id;
   idIn.addEventListener('input', () => { items[sec][idx].id = idIn.value; });
 
+  // "Weekly" chip: item's varieties and prices are looked up on Four Seasons each week
+  const weeklyBtn = document.createElement('button');
+  weeklyBtn.className = 'weekly-btn';
+  weeklyBtn.textContent = 'Weekly';
+  weeklyBtn.title = 'Changes weekly: look up this week\'s varieties and prices on Four Seasons';
+
+  // Second line, shown only for weekly items
+  const wf = document.createElement('div');
+  wf.className = 'weekly-fields';
+  const lookupIn  = makeWeeklyField(wf, 'Look up on Four Seasons as', item.lookup, defaultLookup(item.name));
+  const excludeIn = makeWeeklyField(wf, 'Leave out items containing', item.exclude, 'e.g. Juice, pk');
+  lookupIn.addEventListener('input',  () => { items[sec][idx].lookup  = lookupIn.value; });
+  excludeIn.addEventListener('input', () => { items[sec][idx].exclude = excludeIn.value; });
+
+  nameIn.addEventListener('input', () => {
+    items[sec][idx].name = nameIn.value;
+    lookupIn.placeholder = defaultLookup(nameIn.value);
+  });
+
+  function showWeekly() {
+    const on = items[sec][idx].weekly;
+    weeklyBtn.setAttribute('aria-pressed', String(on));
+    wf.hidden = !on;
+    idIn.disabled = on;
+    idIn.placeholder = on ? 'Not needed' : (sec === 'seasonal' ? 'ID (optional)' : 'Item ID');
+  }
+  weeklyBtn.addEventListener('click', () => { items[sec][idx].weekly = !items[sec][idx].weekly; showWeekly(); });
+  showWeekly();
+
   fields.appendChild(nameIn);
   fields.appendChild(idIn);
+  fields.appendChild(weeklyBtn);
+  main.appendChild(fields);
+  main.appendChild(wf);
 
   // Delete button
   const delBtn = document.createElement('button');
@@ -1182,13 +1230,34 @@ function makeConfigRow(sec, item, idx, card) {
   });
 
   row.appendChild(handle);
-  row.appendChild(fields);
+  row.appendChild(main);
   row.appendChild(delBtn);
 
   // Wire pointer-based drag-to-reorder on the handle
   setupDragHandle(handle, row, card, sec);
 
   return row;
+}
+
+/** One labelled input on a weekly item's second line. */
+function makeWeeklyField(parent, label, value, placeholder) {
+  const box = document.createElement('div');
+  box.className = 'weekly-field';
+  const lab = document.createElement('label');
+  lab.textContent = label;
+  const input = document.createElement('input');
+  input.className   = 'config-input';
+  input.value       = value || '';
+  input.placeholder = placeholder;
+  lab.appendChild(input);
+  box.appendChild(lab);
+  parent.appendChild(box);
+  return input;
+}
+
+/** Search words used when "Look up as" is left blank: "Apples" → "OG Apples". */
+function defaultLookup(name) {
+  return name.trim() ? 'OG ' + name.trim() : 'Search words';
 }
 
 /**
@@ -1315,6 +1384,9 @@ function syncInputsToState(card, sec) {
     const idIn   = row.querySelector('.id-input');
     if (nameIn) items[sec][idx].name = nameIn.value;
     if (idIn)   items[sec][idx].id   = idIn.value;
+    const [lookupIn, excludeIn] = row.querySelectorAll('.weekly-field input');
+    if (lookupIn)  items[sec][idx].lookup  = lookupIn.value;
+    if (excludeIn) items[sec][idx].exclude = excludeIn.value;
   });
 }
 
@@ -1361,22 +1433,35 @@ function importConfig() {
   input.click();
 }
 
+/**
+ * Coerce one item to the full shape. Older saved lists have only name + id:
+ * Seasonal items default to weekly (looked up each week), others to fixed.
+ * Blank lookup means "use defaultLookup(name)" at lookup time.
+ */
+function normalizeItem(sec, i) {
+  const str = v => typeof v === 'string' ? v : '';
+  return {
+    name:    str(i.name),
+    id:      str(i.id),
+    weekly:  typeof i.weekly === 'boolean' ? i.weekly : sec === 'seasonal',
+    lookup:  str(i.lookup),
+    exclude: str(i.exclude)
+  };
+}
+
 /** Sanitize imported config: coerce to expected shape, drop malformed entries. */
 function validateItems(raw) {
   const clean = {};
   SECTION_KEYS.forEach(key => {
     if (!Array.isArray(raw[key])) {
-      clean[key] = JSON.parse(JSON.stringify(DEFAULTS[key]));
+      clean[key] = DEFAULTS[key].map(i => normalizeItem(key, i));
       return;
     }
     clean[key] = raw[key]
       .filter(i => i && typeof i === 'object')
-      .map(i => ({
-        name: typeof i.name === 'string' ? i.name : '',
-        id:   typeof i.id   === 'string' ? i.id   : ''
-      }))
+      .map(i => normalizeItem(key, i))
       .filter(i => i.name.trim() !== '');
-    if (clean[key].length === 0) clean[key] = JSON.parse(JSON.stringify(DEFAULTS[key]));
+    if (clean[key].length === 0) clean[key] = DEFAULTS[key].map(i => normalizeItem(key, i));
   });
   return clean;
 }

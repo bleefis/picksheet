@@ -4,6 +4,23 @@ All notable changes to the Four Seasons Order app.
 
 ---
 
+## [1.2.0] - unreleased
+
+**Weekly items (groundwork for live prices)**
+- New **Weekly** switch on every item in ⚙ settings. Weekly items get two
+  more boxes: "Look up on Four Seasons as" (defaults to "OG " + name) and
+  "Leave out items containing" (e.g. "Juice, pk").
+- Seasonal items start as Weekly; Produce and Meat & Dairy start as fixed.
+- Older saved lists and backups load unchanged and pick up the new settings.
+- Ordering and the email are unchanged in this version.
+
+**Shared list**
+- `database.rules.json` and setup steps in DEPLOY.md for the shared
+  Firebase list.
+- Offline cache bumped to `order-pwa-v4`.
+
+---
+
 ## [1.1.0] - 2026-09-21
 
 **Remote config sync (Firebase)**

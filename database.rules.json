@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "order-config": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.hasChildren(['items'])"
+    },
+    "prices": {
+      ".read": true,
+      ".write": false
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
