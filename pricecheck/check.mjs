@@ -64,16 +64,34 @@ async function currentAccountText(page) {
 
 /** Switch to a customer number using the Ship To list. */
 async function switchAccount(page, number) {
-  await page.goto(`${PORTAL}/secure/account/sales-person`, { waitUntil: 'domcontentloaded' });
+  const listUrl = `${PORTAL}/secure/account/sales-person`;
+  await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   if ((await currentAccountText(page)).includes(number)) { log(`Already on ${number}`); return; }
-  const row = page.locator('tr', { hasText: number }).first();
-  await row.locator('a').first().click().catch(() => row.click());
-  await page.waitForLoadState('domcontentloaded');
-  await page.goto(`${PORTAL}/secure/account/sales-person`, { waitUntil: 'domcontentloaded' });
+
+  // The smallest element whose text holds the number, then whatever is clickable in its row.
+  const target = page.locator(`xpath=//*[contains(normalize-space(text()), "${number}")]`).last();
+  const row = target.locator('xpath=ancestor-or-self::*[self::tr or self::li or contains(@class,"row") or contains(@class,"item")][1]');
+  const clickable = row.locator('a, button, input[type=submit], input[type=button], input[type=radio]');
+  log(`Ship To row for ${number}: ${(await row.innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 200)}`);
+  log(`Clickable in row: ${await clickable.count().catch(() => 0)}`);
+  if (await clickable.count().catch(() => 0)) await clickable.first().click();
+  else await target.click();
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  // Some lists need a confirm button after choosing.
+  const confirm = page.getByRole('button', { name: /select|continue|switch|change|submit|ok/i });
+  if (await confirm.count().catch(() => 0)) {
+    await confirm.first().click().catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  }
+
+  await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
   const now = await currentAccountText(page);
   if (!now.includes(number)) {
     await shot(page, `switch-${number}`);
-    throw new Error(`Could not switch to customer ${number}. The page says: ${now.slice(0, 200)}`);
+    const html = await row.evaluate(el => el.outerHTML).catch(() => '');
+    log(`Row HTML: ${html.replace(/\s+/g, ' ').slice(0, 1500)}`);
+    throw new Error(`Could not switch to customer ${number}. The page says: ${now.replace(/\s+/g, ' ').slice(0, 200)}`);
   }
   log(`Switched to ${number}`);
 }
