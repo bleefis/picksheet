@@ -21,6 +21,9 @@ import { parseRow, buildOptions, lookupFor } from './parse.mjs';
 const PORTAL       = 'https://customer.fsproduce.com';
 const DATABASE_URL = 'https://picksheet-8b2a0-default-rtdb.firebaseio.com';
 const ACCOUNTS     = { produce: '94273', meat: '94274' };   // Produce / Meat & Dairy
+// The portal sometimes names the account without its number; Meat & Dairy ends in "M/D".
+const isOn = (text, number) => text.includes(number) ||
+  (number === ACCOUNTS.meat ? /M\/D/.test(text) : /Highland Roots/i.test(text) && !/M\/D/.test(text));
 const SECTION_ACCOUNT = { seasonal: 'produce', produce: 'produce', meat: 'meat' };
 const MAX_PAGES    = 8;
 
@@ -94,7 +97,7 @@ async function switchAccount(page, number) {
   const listUrl = `${PORTAL}/secure/account/sales-person`;
   await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-  if ((await currentAccountText(page)).includes(number)) { log(`Already on ${number}`); return; }
+  if (isOn(await currentAccountText(page), number)) { log(`Already on ${number}`); return; }
 
   // Each row in the Ship To table opens a "Change Ship To" box when clicked.
   const row = page.locator('tr', { has: page.locator(`td:text-is("${number}")`) }).first();
@@ -124,7 +127,7 @@ async function switchAccount(page, number) {
 
   await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
   const now = await currentAccountText(page);
-  if (!now.includes(number)) {
+  if (!isOn(now, number)) {
     await shot(page, `switch-${number}`);
     throw new Error(`Could not switch to customer ${number}. The page says: ${now.replace(/\s+/g, ' ').slice(0, 200)}`);
   }
