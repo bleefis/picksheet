@@ -628,8 +628,8 @@ function updateSyncIndicator() {
   const base = showConfig ? 'Configure items' : SECTION_LABELS[currentPage];
   const icons = { local: '', syncing: ' ⟳', synced: ' ✓', error: ' ⚠' };
   const colors = { local: 'rgba(255,255,255,0.6)', syncing: '#ffd600', synced: '#4caf7d', error: '#ff6b6b' };
-  sub.textContent = base + (useFirebase ? icons[status] : '');
-  sub.style.color = useFirebase ? colors[status] : 'rgba(255,255,255,0.6)';
+  sub.textContent = base + (useFirebase ? icons[syncStatus] : '');
+  sub.style.color = useFirebase ? colors[syncStatus] : 'rgba(255,255,255,0.6)';
 }
 
 // ============================================================
