@@ -1,14 +1,14 @@
 # Daily Four Seasons price check for the picksheet app.
-# Runs at noon Virginia time and saves this week's options and prices to
+# Runs at 6 AM Virginia time and saves this week's options and prices to
 # Firebase (/prices). Can also be run by hand from the Actions tab.
-name: Noon price check
+name: Daily price check
 
 on:
   schedule:
-    # GitHub schedules use UTC. Noon in Virginia is 16:00 UTC in summer and
-    # 17:00 UTC in winter, so both run and the "noon only" step skips the other.
-    - cron: "0 16 * * *"
-    - cron: "0 17 * * *"
+    # GitHub schedules use UTC. 6 AM in Virginia is 10:00 UTC in summer and
+    # 11:00 UTC in winter, so both run and the "6 AM only" step skips the other.
+    - cron: "0 10 * * *"
+    - cron: "0 11 * * *"
   workflow_dispatch:
     inputs:
       only:
@@ -39,12 +39,12 @@ jobs:
       run:
         working-directory: pricecheck
     steps:
-      - name: Noon only
+      - name: 6 AM only
         id: gate
         working-directory: .
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/New_York date +%H)" != "12" ]; then
-            echo "Not noon in Virginia right now, skipping."
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/New_York date +%H)" != "06" ]; then
+            echo "Not 6 AM in Virginia right now, skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
