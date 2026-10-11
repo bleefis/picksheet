@@ -49,7 +49,11 @@ function initFirebase() {
 
 // ── Portal ─────────────────────────────────────────────────
 async function signIn(page) {
-  await page.goto(`${PORTAL}/login`, { waitUntil: 'domcontentloaded' });
+  // The portal is sometimes slow to answer; give it a few tries.
+  for (let tries = 1; ; tries++) {
+    try { await page.goto(`${PORTAL}/login`, { waitUntil: 'domcontentloaded', timeout: 60000 }); break; }
+    catch (e) { if (tries >= 3) throw e; log(`Login page slow, trying again (${tries})`); await page.waitForTimeout(15000); }
+  }
   await page.locator('input[type="email"], input[name*="mail" i], input[id*="mail" i]').first().fill(env.FS_EMAIL);
   await page.locator('input[type="password"]').first().fill(env.FS_PASSWORD);
   await page.getByRole('button', { name: /next|sign in|log in/i }).first().click();
@@ -78,7 +82,7 @@ async function signIn(page) {
 async function signOut(page) {
   const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')]
     .filter(a => /log.?out|sign.?out|log.?off/i.test(a.href + ' ' + a.textContent))
-    .map(a => a.href));
+    .map(a => a.href)).catch(() => []);
   log(`Sign out links: ${links.join(' | ') || 'none found'}`);
   await page.goto(links[0] || `${PORTAL}/logout`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
