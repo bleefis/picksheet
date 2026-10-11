@@ -219,6 +219,28 @@ html, body {
 }
 
 /* Section title card at top of each order page */
+.header-left .fresh { font-size: 10.5px; color: #bfe8d1; margin-top: 3px; }
+.header-left .fresh.old { color: #ffd600; }
+
+/* Weekly items: a family row that opens to show this week's options */
+.item-row.fam { cursor: pointer; background: #f7faf8; }
+.item-row.fam .item-name { font-weight: 600; }
+.item-sub  { font-size: 10.5px; color: var(--green-mid); font-weight: 600; margin-top: 1px; pointer-events: none; }
+.chev      { font-size: 11px; color: var(--muted); margin: 0 8px; pointer-events: none; }
+.qty-badge.sum { pointer-events: none; }
+.item-row.var { padding-left: 26px; }
+.var-price { flex: none; width: 66px; text-align: right; font-size: 12px; font-weight: 600; color: var(--ink); margin-right: 10px; pointer-events: none; }
+.var-price small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
+.tag { display: inline-block; font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 3px; margin-left: 5px; vertical-align: 1px; letter-spacing: 0.03em; }
+.tag.best { background: #f3cf3c; color: #3a2f00; }
+.tag.ad   { background: var(--green-lt); color: var(--green); }
+.show-all { justify-content: center; color: var(--green-mid); font-size: 13px; font-weight: 600; cursor: pointer; padding-left: 14px; }
+.na-tag   { font-size: 10.5px; color: #9a978f; font-style: italic; margin-top: 1px; }
+.item-row.na .item-name { color: #9a978f; }
+.item-warn { font-size: 10.5px; color: var(--danger); font-weight: 700; margin-top: 1px; }
+.stale-note { background: #fff3cd; color: #6b5200; font-size: 12px; padding: 9px 12px; border-radius: var(--radius-sm); margin-bottom: 12px; }
+.est-total { background: var(--green-lt); color: var(--green-dk); border-radius: var(--radius-sm); padding: 7px 10px; margin-top: 8px; font-size: 13px; }
+
 .section-intro { background: var(--green); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; color: #fff; }
 .section-intro h2 { font-family: 'DM Serif Display', serif; font-size: 18px; font-weight: 400; }
 .section-intro p  { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 3px; }
@@ -419,6 +441,7 @@ html, body {
     <div class="header-left">
       <h1>Four Seasons Order</h1>
       <div class="sub" id="header-sub">Weekly pick sheet</div>
+      <div class="fresh" id="prices-fresh" hidden></div>
     </div>
     <div class="header-right">
       <!-- Gear icon toggles config page -->
@@ -563,6 +586,13 @@ const ORDER_EMAIL = 'highlandrootsmkt@gmail.com';
 // Max quantity per item — taps cycle 0 → 1 → ... → MAX → 0
 const MAX_QTY = 4;
 
+// This week's options and prices, saved each morning by the Four Seasons price check
+const KEY_PRICES   = 'order_prices_v1';
+const PRICES_PATH  = 'prices';
+const VAR_SEP      = '::';   // quantity key for one option: "Apples::42994"
+const SHOW_FIRST   = 5;      // options shown before "Show all"
+const STALE_HOURS  = 30;     // older prices get the amber warning
+
 // ============================================================
 //  FIREBASE CONFIG — Remote config sync
 //  Get these from Firebase Console > Project Settings > General > Your apps
@@ -597,6 +627,9 @@ let items       = {};    // { seasonal:[{name,id},...], produce:[...], meat:[...
 let qty         = {};    // { seasonal:{'Apples':2,...}, produce:{...}, meat:{...} }
 let currentPage = 0;     // 0=seasonal, 1=produce, 2=meat
 let showConfig  = false; // true when config editor is open
+let prices      = null;  // { checkedAt, sections:{ seasonal:[{name, options|status...}] } }
+let openFamilies = {};   // which weekly items are opened, e.g. { 'seasonal/Apples': true }
+let showAllFor   = {};   // which opened items show every option
 
 
 // ============================================================
@@ -667,6 +700,68 @@ function loadState() {
   }
 }
 
+// ── Prices ────────────────────────────────────────────────
+function loadPrices() {
+  try { const s = localStorage.getItem(KEY_PRICES); if (s) prices = JSON.parse(s); } catch(e) {}
+  renderFreshness();
+  if (useFirebase && firebaseDb) {
+    firebaseDb.ref(PRICES_PATH).on('value', snap => {
+      const remote = snap.val();
+      if (!remote || !remote.sections) return;
+      prices = remote;
+      try { localStorage.setItem(KEY_PRICES, JSON.stringify(prices)); } catch(e) {}
+      renderFreshness();
+      if (!showConfig) renderOrderPage();
+    }, err => console.warn('Price read failed:', err));
+  }
+}
+
+function pricesAgeHours() {
+  return prices && prices.checkedAt ? (Date.now() - new Date(prices.checkedAt)) / 36e5 : Infinity;
+}
+
+/** "today 6:04 AM", "yesterday 6:04 AM" or "Tue 6:04 AM" */
+function whenText(iso) {
+  const d = new Date(iso), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString())) / 864e5);
+  if (days === 0) return 'today ' + time;
+  if (days === 1) return 'yesterday ' + time;
+  return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+}
+
+function renderFreshness() {
+  const el = document.getElementById('prices-fresh');
+  if (!el) return;
+  if (!prices || !prices.checkedAt || showConfig) { el.hidden = true; return; }
+  const old = pricesAgeHours() > STALE_HOURS;
+  el.hidden = false;
+  el.className = 'fresh' + (old ? ' old' : '');
+  el.textContent = (old ? '⚠ Prices from ' : '✓ Prices from ') + whenText(prices.checkedAt);
+}
+
+/** This week's price check result for one item, matched by name. */
+function priceEntry(sec, item) {
+  const list = prices && prices.sections && prices.sections[sec];
+  if (!Array.isArray(list)) return null;
+  const want = item.name.trim().toLowerCase();
+  return list.find(e => e && e.name && e.name.trim().toLowerCase() === want) || null;
+}
+
+/** "OG Apples Fuji Import 12/3 lb Bag" → "Fuji Import 12/3 lb Bag" */
+function shortName(description, lookup) {
+  const d = String(description || ''), l = String(lookup || '').trim();
+  return l && d.toLowerCase().startsWith(l.toLowerCase() + ' ') ? d.slice(l.length + 1) : d;
+}
+
+function money(n) { return '$' + Number(n).toFixed(2); }
+
+/** Total cases chosen across one weekly item's options. */
+function familyTotal(sec, name) {
+  const prefix = name + VAR_SEP;
+  return Object.entries(qty[sec]).reduce((n, [k, v]) => n + (k.startsWith(prefix) ? (v || 0) : 0), 0);
+}
+
 function saveItems() {
   saveItemsLocalOnly();
   if (useFirebase) pushToFirebase();
@@ -705,6 +800,7 @@ function renderProgress() {
   document.getElementById('header-sub').textContent   = showConfig ? 'Configure items' : SECTION_LABELS[currentPage];
   document.getElementById('progress-wrap').style.display = showConfig ? 'none' : '';
   updateSyncIndicator();
+  renderFreshness();
 }
 
 
@@ -719,6 +815,8 @@ function ringId(sec, name)  { return 'r_' + sec + '_' + name.replace(/\W/g, '_')
 function renderOrderPage() {
   const sec  = SECTION_KEYS[currentPage];
   const body = document.getElementById('main-body');
+  const keepScroll = body.dataset.page === String(currentPage) ? window.scrollY : null;
+  body.dataset.page = currentPage;
   body.innerHTML = '';
 
   // Section intro banner
@@ -727,55 +825,156 @@ function renderOrderPage() {
   intro.innerHTML = `<h2>${SECTION_LABELS[currentPage]}</h2><p>${SECTION_DESCS[currentPage]}</p>`;
   body.appendChild(intro);
 
+  // Amber note when the morning price check didn't run
+  if (prices && prices.checkedAt && pricesAgeHours() > STALE_HOURS) {
+    const note = document.createElement('div');
+    note.className = 'stale-note';
+    note.innerHTML = `⚠ Prices are from <b></b>. The latest check didn't run, so some items may have changed.`;
+    note.querySelector('b').textContent = whenText(prices.checkedAt);
+    body.appendChild(note);
+  }
+
   // Item list card
   const card = document.createElement('div');
   card.className = 'items-card';
 
   items[sec].forEach(item => {
-    const row = document.createElement('div');
-    row.className = 'item-row';
-
-    // Left: item name + optional ID display
-    const info = document.createElement('div');
-    info.className = 'item-info';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'item-name';
-    nameEl.textContent = item.name;
-    info.appendChild(nameEl);
-    if (item.id) {
-      const idEl = document.createElement('div');
-      idEl.className = 'item-id';
-      idEl.textContent = '#' + item.id;
-      info.appendChild(idEl);
+    const entry = priceEntry(sec, item);
+    if (item.weekly && entry && Array.isArray(entry.options)) {
+      if (entry.options.length) addFamilyRows(card, sec, item, entry);
+      else addPlainRow(card, sec, item, { na: true });
+    } else {
+      addPlainRow(card, sec, item, { entry });
     }
-
-    // Hold-progress ring (SVG circle, animates on long-press)
-    const ring = document.createElement('div');
-    ring.className = 'hold-ring';
-    ring.id = ringId(sec, item.name);
-    ring.innerHTML = `<svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="17.8"/></svg>`;
-
-    // Quantity badge — THE ONLY TAP TARGET in this row
-    const badge = document.createElement('div');
-    badge.className = 'qty-badge';
-    badge.id = badgeId(sec, item.name);
-    badge.setAttribute('role', 'button');
-    badge.setAttribute('tabindex', '0');
-    badge.setAttribute('aria-label', `${item.name}, tap to add, hold to reset`);
-    const q = qty[sec][item.name] || 0;
-    badge.textContent = q || '—';
-    if (q > 0) badge.classList.add('active');
-
-    row.appendChild(info);
-    row.appendChild(ring);
-    row.appendChild(badge);
-    card.appendChild(row);
-
-    attachBadgeInteraction(badge, ring, sec, item.name);
   });
 
   body.appendChild(card);
+  if (keepScroll != null) window.scrollTo(0, keepScroll);  // opening an item keeps your place
   renderFooter();
+}
+
+/** A row with one quantity circle: fixed items, and weekly items with no price data yet. */
+function addPlainRow(card, sec, item, { entry, na } = {}) {
+  const row = document.createElement('div');
+  row.className = 'item-row' + (na ? ' na' : '');
+
+  const info = document.createElement('div');
+  info.className = 'item-info';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'item-name';
+  nameEl.textContent = item.name;
+  info.appendChild(nameEl);
+
+  const line = document.createElement('div');
+  if (na) {
+    line.className = 'na-tag';
+    line.textContent = 'Not available this week';
+  } else if (entry && entry.status === 'not-found' && item.id) {
+    line.className = 'item-warn';
+    line.textContent = `#${item.id} isn't on Four Seasons this week. Update it in ⚙ settings.`;
+  } else if (item.id) {
+    line.className = 'item-id';
+    line.textContent = '#' + item.id + (entry && entry.casePrice ? ' · ' + money(entry.casePrice) : '');
+  }
+  if (line.className) info.appendChild(line);
+
+  const { ring, badge } = makeBadge(sec, item.name, item.name);
+  if (na || (entry && entry.status === 'not-found')) badge.style.opacity = '0.4';
+  row.append(info, ring, badge);
+  card.appendChild(row);
+  attachBadgeInteraction(badge, ring, sec, item.name);
+}
+
+/** A weekly item: a family row that opens to list this week's options, cheapest first. */
+function addFamilyRows(card, sec, item, entry) {
+  const key  = sec + '/' + item.name;
+  const open = !!openFamilies[key];
+  const opts = entry.options;
+  const best = opts[0];
+
+  const row = document.createElement('div');
+  row.className = 'item-row fam';
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', String(open));
+  const info = document.createElement('div');
+  info.className = 'item-info';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'item-name';
+  nameEl.textContent = item.name;
+  const sub = document.createElement('div');
+  sub.className = 'item-sub';
+  const from = best.perLb != null ? money(best.perLb) + '/lb' : money(best.casePrice);
+  sub.textContent = `${opts.length} option${opts.length !== 1 ? 's' : ''} · from ${from}`;
+  info.append(nameEl, sub);
+  const chev = document.createElement('span');
+  chev.className = 'chev';
+  chev.textContent = open ? '▲' : '▼';
+  const sum = document.createElement('div');
+  sum.id = badgeId(sec, item.name + VAR_SEP);
+  const total = familyTotal(sec, item.name);
+  sum.className = 'qty-badge sum' + (total ? ' active' : '');
+  sum.textContent = total || '—';
+  row.append(info, chev, sum);
+  row.addEventListener('click', () => { openFamilies[key] = !open; renderOrderPage(); });
+  card.appendChild(row);
+  if (!open) return;
+
+  const all = !!showAllFor[key];
+  opts.forEach((o, i) => {
+    const qkey = item.name + VAR_SEP + o.code;
+    if (!all && i >= SHOW_FIRST && !(qty[sec][qkey] > 0)) return;
+    const vr = document.createElement('div');
+    vr.className = 'item-row var';
+    const vi = document.createElement('div');
+    vi.className = 'item-info';
+    const vn = document.createElement('div');
+    vn.className = 'item-name';
+    vn.textContent = shortName(o.description, entry.lookup);
+    if (i === 0) vn.insertAdjacentHTML('beforeend', '<span class="tag best">CHEAPEST</span>');
+    if (o.onAd)  vn.insertAdjacentHTML('beforeend', '<span class="tag ad">ON AD</span>');
+    const vid = document.createElement('div');
+    vid.className = 'item-id';
+    vid.textContent = '#' + o.code;
+    vi.append(vn, vid);
+    const pr = document.createElement('div');
+    pr.className = 'var-price';
+    pr.textContent = money(o.casePrice);
+    if (o.perLb != null) {
+      const sm = document.createElement('small');
+      sm.textContent = money(o.perLb) + '/lb';
+      pr.appendChild(sm);
+    }
+    const { ring, badge } = makeBadge(sec, qkey, shortName(o.description, entry.lookup));
+    vr.append(vi, pr, ring, badge);
+    card.appendChild(vr);
+    attachBadgeInteraction(badge, ring, sec, qkey);
+  });
+
+  if (opts.length > SHOW_FIRST) {
+    const more = document.createElement('div');
+    more.className = 'item-row show-all';
+    more.textContent = all ? 'Show fewer ▴' : `Show all ${opts.length} ${item.name.toLowerCase()} ▾`;
+    more.addEventListener('click', () => { showAllFor[key] = !all; renderOrderPage(); });
+    card.appendChild(more);
+  }
+}
+
+/** The hold ring and tappable quantity circle used on every row. */
+function makeBadge(sec, key, label) {
+  const ring = document.createElement('div');
+  ring.className = 'hold-ring';
+  ring.id = ringId(sec, key);
+  ring.innerHTML = `<svg viewBox="0 0 42 42"><circle cx="21" cy="21" r="17.8"/></svg>`;
+  const badge = document.createElement('div');
+  badge.className = 'qty-badge';
+  badge.id = badgeId(sec, key);
+  badge.setAttribute('role', 'button');
+  badge.setAttribute('tabindex', '0');
+  badge.setAttribute('aria-label', `${label}, tap to add, hold to reset`);
+  const q = qty[sec][key] || 0;
+  badge.textContent = q || '—';
+  if (q > 0) badge.classList.add('active');
+  return { ring, badge };
 }
 
 /**
@@ -854,12 +1053,19 @@ function refreshBadge(sec, name, bump) {
     void badge.offsetWidth; // force reflow to re-trigger animation
     badge.classList.add('bump');
   }
+  // An option of a weekly item: update that item's total too
+  if (name.includes(VAR_SEP)) {
+    const fam = name.split(VAR_SEP)[0];
+    const sum = document.getElementById(badgeId(sec, fam + VAR_SEP));
+    const total = familyTotal(sec, fam);
+    if (sum) { sum.textContent = total || '—'; sum.className = 'qty-badge sum' + (total ? ' active' : ''); }
+  }
 }
 
 /** Refresh every badge on the current page (e.g. after reset). */
 function refreshAllBadges() {
   const sec = SECTION_KEYS[currentPage];
-  items[sec].forEach(item => refreshBadge(sec, item.name));
+  Object.keys(qty[sec]).concat(items[sec].map(i => i.name)).forEach(k => refreshBadge(sec, k));
 }
 
 
@@ -908,19 +1114,42 @@ function renderFooter() {
 //  Fallback: mailto: with CSV in body (original behavior)
 // ============================================================
 
-function buildOrderText(sections) {
-  const rows = ['ItemID,Quantity,ItemName'];
+/**
+ * Every line being ordered: { id, q, name, casePrice }.
+ * Weekly items order the options picked under them (their own item # and full description).
+ */
+function orderLines(sections) {
+  const lines = [];
   sections.forEach(sec => {
     items[sec].forEach(item => {
+      const entry = priceEntry(sec, item);
       const q = qty[sec][item.name] || 0;
-      if (q > 0) {
-        const id   = (item.id   || '').replace(/,/g, '');
-        const name = (item.name || '').replace(/,/g, ';');
-        rows.push(`${id},${q},${name}`);
-      }
+      if (q > 0) lines.push({ id: item.id || '', q, name: item.name, casePrice: entry && entry.casePrice });
+      const prefix = item.name + VAR_SEP;
+      Object.entries(qty[sec]).forEach(([k, v]) => {
+        if (!k.startsWith(prefix) || !(v > 0)) return;
+        const code = k.slice(prefix.length);
+        const o = entry && Array.isArray(entry.options) && entry.options.find(x => x.code === code);
+        lines.push({ id: code, q: v, name: o ? o.description : item.name, casePrice: o && o.casePrice });
+      });
     });
   });
+  return lines;
+}
+
+function buildOrderText(sections) {
+  const rows = ['ItemID,Quantity,ItemName'];
+  orderLines(sections).forEach(l => {
+    rows.push(`${String(l.id).replace(/,/g, '')},${l.q},${String(l.name).replace(/,/g, ';')}`);
+  });
   return rows.join('\n');
+}
+
+/** Estimated cost from this week's prices; null when no prices are known. */
+function estimatedTotal(sections) {
+  const lines = orderLines(sections);
+  if (!lines.some(l => l.casePrice)) return null;
+  return lines.reduce((t, l) => t + (l.casePrice || 0) * l.q, 0);
 }
 
 function dateStr() {
@@ -980,8 +1209,11 @@ function showExportSheet() {
   const text1 = buildOrderText(['seasonal', 'produce']);
   const text2 = buildOrderText(['meat']);
 
-  const totalSP   = ['seasonal','produce'].reduce((n, s) => n + Object.values(qty[s]).filter(v => v > 0).length, 0);
-  const totalMeat = Object.values(qty['meat']).filter(v => v > 0).length;
+  const totalSP   = orderLines(['seasonal','produce']).length;
+  const totalMeat = orderLines(['meat']).length;
+  const estSP     = estimatedTotal(['seasonal','produce']);
+  const estMeat   = estimatedTotal(['meat']);
+  const dollars   = n => n == null ? '—' : '$' + Math.round(n).toLocaleString();
 
   const canShareFiles = navigator.canShare && navigator.canShare({ files: [new File([''], 'test.csv', {type: 'text/csv'})] });
 
@@ -992,6 +1224,9 @@ function showExportSheet() {
   sheet.innerHTML = `
     <h2>Export Order</h2>
     <p><strong>${totalSP}</strong> Seasonal/Produce item${totalSP !== 1 ? 's' : ''} &nbsp;·&nbsp; <strong>${totalMeat}</strong> Meat &amp; Dairy item${totalMeat !== 1 ? 's' : ''}</p>
+    ${estSP != null || estMeat != null
+      ? `<div class="est-total">Estimated: Produce <strong>${dollars(estSP)}</strong> &nbsp;·&nbsp; Meat &amp; Dairy <strong>${dollars(estMeat)}</strong></div>`
+      : ''}
     <p style="margin-top:8px; font-size:13px;">
       ${canShareFiles
         ? 'Share as <strong>.csv files</strong> via Gmail, Drive, or any app.'
@@ -1495,6 +1730,7 @@ if ('serviceWorker' in navigator) {
 (async function boot() {
   await initFirebase();
   loadState();
+  loadPrices();
   renderProgress();
   renderOrderPage();
 })();
