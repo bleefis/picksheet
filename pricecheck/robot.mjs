@@ -83,25 +83,26 @@ async function removeItems(page, spec) {
     for (const code of codes.split(',').map(c => c.trim()).filter(Boolean)) {
       await page.goto(`${PORTAL}/shopping-cart`, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-      // Walk up from the item's link to the nearest box that holds exactly one
-      // remove button, and mark that button so it can be clicked.
       const found = await page.evaluate((code) => {
         document.querySelectorAll('[data-robot-remove]').forEach(b => b.removeAttribute('data-robot-remove'));
-        const all = document.querySelectorAll('button.btn-remove-shopping-cart, [class*="remove" i]');
-        for (const a of document.querySelectorAll(`a[href*="/item-content/${code}/"]`)) {
-          if (a.closest('.modal')) continue;
-          for (let el = a.parentElement; el && el !== document.body; el = el.parentElement) {
-            const btns = [...el.querySelectorAll('button.btn-remove-shopping-cart, button[class*="remove" i], a[class*="remove" i]')];
-            if (btns.length === 1) { btns[0].setAttribute('data-robot-remove', '1'); return { ok: true }; }
-            if (btns.length > 1) break;
-          }
+        // Start from each remove button (one per cart line) and widen to the
+        // biggest box that still holds only that button: that box is its line.
+        const btns = [...document.querySelectorAll('button.btn-remove-shopping-cart')]
+          .filter(b => !b.closest('.modal, .floating-carts'));
+        const re = new RegExp(`(^|\\D)${code}(\\D|$)`);
+        for (const btn of btns) {
+          let line = btn;
+          while (line.parentElement && line.parentElement !== document.body &&
+                 line.parentElement.querySelectorAll('button.btn-remove-shopping-cart').length === 1 &&
+                 !line.parentElement.querySelector('.floating-carts')) line = line.parentElement;
+          if (re.test(line.innerText || '')) { btn.setAttribute('data-robot-remove', '1'); return { ok: true }; }
         }
-        const link = document.querySelector(`a[href*="/item-content/${code}/"]`);
-        return { ok: false, removeButtons: all.length, links: document.querySelectorAll(`a[href*="/item-content/${code}/"]`).length,
-          around: link ? (link.closest('tr, li, div')?.parentElement?.outerHTML || '').replace(/\s+/g, ' ').slice(0, 1500) : '' };
+        const first = btns[0];
+        let box = first; for (let i = 0; first && i < 6 && box.parentElement; i++) box = box.parentElement;
+        return { ok: false, removeButtons: btns.length, around: box ? box.outerHTML.replace(/\s+/g, ' ').slice(0, 2500) : '' };
       }, code);
       if (!found.ok) {
-        log(`${LABEL[acct]}: #${code} remove button not found (links ${found.links}, remove buttons on page ${found.removeButtons})`);
+        log(`${LABEL[acct]}: #${code} remove button not found (${found.removeButtons} cart lines with a remove button)`);
         if (found.around) log(`  HTML near it: ${found.around}`);
         continue;
       }
