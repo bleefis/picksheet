@@ -17,7 +17,7 @@ import { chromium } from 'playwright';
 import { initializeApp, cert, deleteApp, getApp } from 'firebase-admin/app';
 import { getDatabase } from 'firebase-admin/database';
 import fs from 'node:fs';
-import { parseRow, buildOptions, lookupFor } from './parse.mjs';
+import { parseRow, buildOptions } from './parse.mjs';
 
 const PORTAL       = 'https://customer.fsproduce.com';
 const DATABASE_URL = 'https://picksheet-8b2a0-default-rtdb.firebaseio.com';
@@ -25,7 +25,6 @@ const ACCOUNTS     = { produce: '94273', meat: '94274' };   // Produce / Meat & 
 // The portal sometimes names the account without its number; Meat & Dairy ends in "M/D".
 const isOn = (text, number) => text.includes(number) ||
   (number === ACCOUNTS.meat ? /M\/D/.test(text) : /Highland Roots/i.test(text) && !/M\/D/.test(text));
-const SECTION_ACCOUNT = { seasonal: 'produce', produce: 'produce', meat: 'meat' };
 const MAX_PAGES    = 8;
 
 const env = process.env;
@@ -219,8 +218,13 @@ async function main() {
     if (!env[k]) throw new Error(`Missing ${k}. Add it under GitHub → Settings → Secrets → Actions.`);
   }
   const db = initFirebase();
-  const table = (await db.ref('products').get()).val();
-  if (!table || !Array.isArray(table.items)) return checkOldList(db);
+  let table = (await db.ref('products').get()).val();
+  if (!table || !Array.isArray(table.items)) {
+    table = { items: buildFromOldList((await db.ref('order-config').get()).val()), updatedAt: new Date().toISOString() };
+    if (!table.items.length) throw new Error('No product list in Firebase yet. Open the app once so it uploads its list.');
+    log(`No product table yet; built ${table.items.length} rows from the old list`);
+    if (!DRY_RUN) await db.ref('products').set(table);
+  }
 
   const all = table.items.map((p, index) => p && ({ ...p, index })).filter(p => p && p.key && String(p.lookup || '').trim());
   const todo = all.filter(p => (!KEYS.length || KEYS.includes(p.key)) && (!ONLY.length || ONLY.includes(String(p.name).trim().toLowerCase())));
@@ -316,77 +320,25 @@ async function main() {
   if (counted === 0 && todo.length) throw new Error('Nothing was checked.');
 }
 
-// ── Old three-page list (until the new app has built /products) ──
-async function checkOldList(db) {
-  log('No product table yet; checking the old list');
-  const config = (await db.ref('order-config').get()).val();
-  if (!config || !config.items) throw new Error('No item list in Firebase yet. Open the app once so it uploads its list.');
-
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
-  const result = { checkedAt: new Date().toISOString(), sections: {}, problems: [] };
-
-  try {
-    await signIn(page);
-    for (const account of ['produce', 'meat']) {
-      const sections = Object.keys(SECTION_ACCOUNT).filter(s => SECTION_ACCOUNT[s] === account);
-      const items = sections.flatMap(sec => (config.items[sec] || []).map((it, i) => ({ sec, i, it })))
-        .filter(({ it }) => it && it.name && (!ONLY.length || ONLY.includes(it.name.trim().toLowerCase())));
-      if (!items.length) continue;
-
-      await switchAccount(page, ACCOUNTS[account]);
-      for (const { sec, i, it } of items) {
-        result.sections[sec] = result.sections[sec] || [];
-        const entry = { name: it.name, weekly: !!it.weekly };
-        try {
-          if (it.weekly) {
-            const words = lookupFor(it);
-            const rows = await search(page, words);
-            entry.lookup  = words;
-            entry.found   = rows.length;
-            entry.options = buildOptions(rows, it.exclude);
-            log(`${it.name}: ${entry.options.length} options (${rows.length} found for "${words}")`);
-          } else if (it.id) {
-            const rows = await search(page, it.id);
-            const match = rows.find(r => r.code === String(it.id).trim());
-            entry.id = it.id;
-            entry.status = match ? 'ok' : 'not-found';
-            if (match) Object.assign(entry, { description: match.description, casePrice: match.casePrice, onAd: match.onAd });
-            log(`${it.name} #${it.id}: ${entry.status}`);
-          }
-        } catch (e) {
-          entry.error = e.message.slice(0, 200);
-          result.problems.push(`${it.name}: ${entry.error}`);
-          log(`${it.name}: ERROR ${entry.error}`);
-          await shot(page, `error-${sec}-${i}`);
-        }
-        result.sections[sec][i] = entry;
-      }
-    }
-  } catch (e) {
-    await shot(page, 'failed');
-    throw e;
-  } finally {
-    await signOut(page).catch(e => log(`Sign out failed: ${e.message}`));
-    await browser.close();
-  }
-
-  // Firebase can't store sparse arrays cleanly; fill gaps left by ONLY.
-  for (const sec of Object.keys(result.sections)) {
-    result.sections[sec] = Array.from(result.sections[sec], e => e || null);
-  }
-
-  const counted = Object.values(result.sections).flat().filter(Boolean).length;
-  log(`Checked ${counted} items, ${result.problems.length} problems`);
-  if (DRY_RUN) {
-    console.log(JSON.stringify(result.sections, null, 1).slice(0, 20000));
-    log('Dry run: not saving.');
-  } else {
-    await db.ref('prices').set(result);
-    log('Saved to Firebase /prices');
-  }
-  await deleteApp(getApp());
-  if (counted === 0) throw new Error('Nothing was checked.');
+// ── Old three-page list → product table (same rules as the app) ──
+function buildFromOldList(old) {
+  const items = (old && old.items) || {};
+  const out = [];
+  let n = 0;
+  [['seasonal', 'produce'], ['produce', 'produce'], ['meat', 'meat']].forEach(([sec, account]) => {
+    (items[sec] || []).filter(i => i && i.name).forEach(i => {
+      const weekly = typeof i.weekly === 'boolean' ? i.weekly : sec === 'seasonal';
+      out.push({
+        key: 'p' + Date.now().toString(36) + (n++).toString(36).padStart(3, '0'),
+        name: i.name.trim(),
+        lookup: weekly || !i.id ? (i.lookup || 'OG ' + i.name.trim()) : String(i.id).trim(),
+        account,
+        exclude: weekly ? (i.exclude || '') : '',
+        hidden: false
+      });
+    });
+  });
+  return out;
 }
 
 main().catch(err => {
