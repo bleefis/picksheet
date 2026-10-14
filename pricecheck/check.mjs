@@ -10,6 +10,7 @@
 // Optional:
 //   DRY_RUN=1               look up prices but don't save them
 //   ONLY=Apples,Grapes      check just these item names (for testing; never saves)
+//   KEYS=k1,k2              check just these product rows and save only them ("Check now")
 //   SHOTS_DIR=shots         save a screenshot when something goes wrong
 
 import { chromium } from 'playwright';
@@ -29,7 +30,8 @@ const MAX_PAGES    = 8;
 
 const env = process.env;
 const ONLY = (env.ONLY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-const DRY_RUN = !!env.DRY_RUN || ONLY.length > 0;   // a partial check must never replace the full price list
+const KEYS = (env.KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
+const DRY_RUN = !!env.DRY_RUN || ONLY.length > 0;   // a test check never saves
 const SHOTS_DIR = env.SHOTS_DIR || '';
 
 function log(...a) { console.log(new Date().toISOString().slice(11, 19), ...a); }
@@ -175,12 +177,148 @@ async function search(page, words) {
   return [...all.values()];
 }
 
+/**
+ * An item # that search can't find: open its own page. Four Seasons shows
+ * "This item is obsolete! Check Replacements" there, and the replacements
+ * page lists suggested item #s in Four Seasons' order.
+ */
+async function obsoleteInfo(page, code) {
+  await page.goto(`${PORTAL}/catalogs/item-content/${code}/x/pr_${code}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  const text = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const name = (text.match(new RegExp(`SAVED CARTS (.+?) ${code}\\b`)) || [])[1] || '';
+  if (!/obsolete/i.test(text)) return { obsolete: false, name };
+  // Load the replacements page fresh: clicking the link can show a previous item's list.
+  await page.goto(`${PORTAL}/catalogs/item-content/Replacements/1/${code}/x/pr_${code}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  const body = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const forThis = new RegExp(`Replacements for: .*\\b${code}\\b`).test(body);
+  const codes = forThis ? await page.evaluate(own => {
+    const seen = new Set();
+    for (const a of document.querySelectorAll('a[href*="/item-content/"]')) {
+      const m = a.href.match(/item-content\/(\d+)\//);
+      if (m && m[1] !== own) seen.add(m[1]);
+    }
+    return [...seen];
+  }, code) : [];
+  log(`  #${code} is obsolete (${name}). Replacements: ${codes.join(', ') || 'none'}${forThis ? '' : ' (page did not load)'}`);
+  return { obsolete: true, name, replacements: codes };
+}
+
+/** Look up one item # in the account that's switched on. */
+async function findItem(page, code) {
+  const rows = await search(page, code);
+  return rows.find(r => r.code === String(code).trim()) || null;
+}
+
 // ── Main ───────────────────────────────────────────────────
+const isItemNo = s => /^\d+$/.test(String(s || '').trim());
+
 async function main() {
   for (const k of ['FS_EMAIL', 'FS_PASSWORD', 'FIREBASE_KEY']) {
     if (!env[k]) throw new Error(`Missing ${k}. Add it under GitHub → Settings → Secrets → Actions.`);
   }
   const db = initFirebase();
+  const table = (await db.ref('products').get()).val();
+  if (!table || !Array.isArray(table.items)) return checkOldList(db);
+
+  const all = table.items.map((p, index) => p && ({ ...p, index })).filter(p => p && p.key && String(p.lookup || '').trim());
+  const todo = all.filter(p => (!KEYS.length || KEYS.includes(p.key)) && (!ONLY.length || ONLY.includes(String(p.name).trim().toLowerCase())));
+  const partial = KEYS.length > 0;
+  log(`${todo.length} of ${all.length} products to check${partial ? ' (Check now)' : ''}`);
+  if (!DRY_RUN) await db.ref('prices/running').set({ startedAt: new Date().toISOString(), keys: partial ? KEYS : 'all' });
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  const entries = {};
+  const swaps = [];       // automatic replacements to save into the product table
+  const problems = [];
+
+  try {
+    await signIn(page);
+    for (const account of ['produce', 'meat']) {
+      const mine = todo.filter(p => (p.account === 'meat' ? 'meat' : 'produce') === account);
+      if (!mine.length) continue;
+      await switchAccount(page, ACCOUNTS[account]);
+      for (const p of mine) {
+        const lookup = String(p.lookup).trim();
+        try {
+          if (isItemNo(lookup)) {
+            const hit = await findItem(page, lookup);
+            if (hit) {
+              entries[p.key] = { lookup, id: lookup, status: 'ok', description: hit.description, casePrice: hit.casePrice, onAd: hit.onAd };
+              log(`${p.name || lookup} #${lookup}: ok`);
+              continue;
+            }
+            const info = await obsoleteInfo(page, lookup);
+            const entry = { lookup, id: lookup, status: info.obsolete ? 'obsolete' : 'not-found', description: info.name };
+            // Take Four Seasons' first replacement that this account can order, unless it was undone before.
+            if (info.obsolete && p.keepOld !== lookup) {
+              for (const code of info.replacements) {
+                const rep = await findItem(page, code);
+                if (!rep) continue;
+                swaps.push({ index: p.index, key: p.key, from: lookup, to: code });
+                entries[p.key] = { lookup: code, id: code, status: 'ok', description: rep.description, casePrice: rep.casePrice, onAd: rep.onAd, replacedFrom: lookup };
+                log(`${p.name || lookup}: replaced #${lookup} with #${code} (${rep.description})`);
+                break;
+              }
+            }
+            if (!entries[p.key]) {
+              entries[p.key] = entry;
+              log(`${p.name || lookup} #${lookup}: ${entry.status}`);
+            }
+          } else {
+            const rows = await search(page, lookup);
+            entries[p.key] = { lookup, found: rows.length, options: buildOptions(rows, p.exclude) };
+            log(`${p.name}: ${entries[p.key].options.length} options (${rows.length} found for "${lookup}")`);
+          }
+        } catch (e) {
+          problems.push(`${p.name || lookup}: ${e.message.slice(0, 200)}`);
+          log(`${p.name || lookup}: ERROR ${e.message.slice(0, 200)}`);
+          await shot(page, `error-${p.key}`);
+        }
+      }
+    }
+  } catch (e) {
+    await shot(page, 'failed');
+    if (!DRY_RUN) await db.ref('prices/running').remove().catch(() => {});
+    throw e;
+  } finally {
+    await signOut(page).catch(e => log(`Sign out failed: ${e.message}`));
+    await browser.close();
+  }
+
+  const counted = Object.keys(entries).length;
+  log(`Checked ${counted} products, ${swaps.length} replaced, ${problems.length} problems`);
+  if (DRY_RUN) {
+    console.log(JSON.stringify(entries, null, 1).slice(0, 20000));
+    log('Dry run: not saving.');
+  } else {
+    // Save replacements into the product table, row by row, only if the row is unchanged since we read it.
+    const at = new Date().toISOString();
+    for (const s of swaps) {
+      const ref = db.ref(`products/items/${s.index}`);
+      const now = (await ref.get()).val();
+      if (!now || now.key !== s.key || String(now.lookup).trim() !== s.from) { log(`Row ${s.key} changed meanwhile; not replacing`); delete entries[s.key]; continue; }
+      await ref.update({ lookup: s.to, replaced: { from: s.from, at } });
+    }
+    if (partial) {
+      const updates = {};
+      for (const [k, v] of Object.entries(entries)) updates[`products/${k}`] = v;
+      updates.running = null;
+      await db.ref('prices').update(updates);
+    } else {
+      await db.ref('prices').set({ checkedAt: new Date().toISOString(), products: entries, problems });
+    }
+    log('Saved to Firebase /prices');
+  }
+  await deleteApp(getApp());
+  if (counted === 0 && todo.length) throw new Error('Nothing was checked.');
+}
+
+// ── Old three-page list (until the new app has built /products) ──
+async function checkOldList(db) {
+  log('No product table yet; checking the old list');
   const config = (await db.ref('order-config').get()).val();
   if (!config || !config.items) throw new Error('No item list in Firebase yet. Open the app once so it uploads its list.');
 
