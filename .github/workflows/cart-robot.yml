@@ -13,6 +13,10 @@ on:
         description: "Use a 1-case test order (Grapes Red to Produce, Kefir to Meat & Dairy) when the order isn't found"
         type: boolean
         default: false
+      remove:
+        description: "Instead of loading, remove these item #s from the carts, e.g. produce:43878;meat:231851"
+        required: false
+        default: ""
       dry_run:
         description: "Sign in and look, but don't import anything"
         type: boolean
@@ -49,6 +53,7 @@ jobs:
           FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
           ORDER_ID: ${{ github.event.inputs.order_id || 'look-only-test' }}
+          REMOVE: ${{ github.event.inputs.remove }}
           TEST_ORDER: ${{ github.event.inputs.test_order == 'true' && '1' || '' }}
           DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
           SHOTS_DIR: shots
