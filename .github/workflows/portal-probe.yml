@@ -1,0 +1,16 @@
+name: Portal probe (one-off, read only)
+on:
+  push:
+    branches: [portal-probe]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults: { run: { working-directory: pricecheck } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - env: { FS_EMAIL: "${{ secrets.FS_EMAIL }}", FS_PASSWORD: "${{ secrets.FS_PASSWORD }}" }
+        run: node probe.mjs
