@@ -102,8 +102,8 @@ main.wide { max-width: none; padding: 0 0 40px; }
 .chip.md { background: var(--md-soft); color: var(--md); }
 .chip.cheap { background: var(--cheap); color: #3a2f00; }
 .chip.ad { background: var(--accent-soft); color: var(--accent-dk); }
-.pr { flex: none; width: 70px; text-align: right; font-weight: 700; font-size: 13.5px; }
-.pr small { display: block; font-weight: 500; color: var(--muted); font-size: 11.5px; }
+.pr { flex: none; min-width: 70px; text-align: right; font-weight: 700; font-size: 13.5px; }
+.pr small { display: block; white-space: nowrap; font-weight: 500; color: var(--muted); font-size: 11.5px; }
 
 /* Quantity circle: tap adds one (to 4, then back to 0), hold clears */
 .qbox { position: relative; flex: none; width: 46px; height: 46px; display: grid; place-items: center; }
@@ -274,6 +274,22 @@ let showAllFor = {};
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = n => '$' + Number(n).toFixed(2);
+// Price of one piece in the case, from the pack size in the name:
+// "12/6 oz" → ÷12, "9 ct" → ÷9. Cases sold by weight ("19 lb", "12/3 lb")
+// show $/lb instead, so they get none.
+function eachText(desc, casePrice) {
+  const d = String(desc || '');
+  if (!(casePrice > 0) || /\d\s*(lb|#)\b/i.test(d)) return '';
+  const range = d.match(/\b(\d+)\s*\/\s*(\d+)\s*ct\b/i);
+  if (range && +range[2] > +range[1]) return money(casePrice / range[2]) + '–' + money(casePrice / range[1]).slice(1) + ' each';
+  const m = d.match(/\b(\d+)\s*\/\s*\d/) || d.match(/\b(\d+)\s*ct\b/i);
+  const n = m ? +m[1] : 0;
+  return n > 1 ? money(casePrice / n) + ' each' : '';
+}
+// The short price shown for a family: $/lb, else per piece, else the case.
+function fromText(o) {
+  return o.perLb != null ? money(o.perLb) + '/lb' : eachText(o.description, o.casePrice) || money(o.casePrice);
+}
 const dollars = n => '$' + Math.round(n).toLocaleString();
 const isItemNo = s => /^\d+$/.test(String(s || '').trim());
 const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -576,7 +592,8 @@ function addPlain(list, p, st) {
   s.className = 's';
   let usable = true;
   if (st.kind === 'item') {
-    s.textContent = '#' + p.lookup.trim() + (e && e.casePrice ? ' · ' + money(e.casePrice) : '');
+    const each = e ? eachText(e.description, e.casePrice) : '';
+    s.textContent = '#' + p.lookup.trim() + (e && e.casePrice ? ' · ' + money(e.casePrice) : '') + (each ? ' · ' + each : '');
     if (e && e.onAd) s.insertAdjacentHTML('beforeend', '<span class="chip ad">ON AD</span>');
   } else {
     usable = false;
@@ -602,7 +619,7 @@ function addFamily(list, p, e) {
   nm.appendChild(nameEl(p, p.name));
   const s = document.createElement('div');
   s.className = 's go';
-  s.textContent = `${plural(opts.length, 'option')} · from ${best.perLb != null ? money(best.perLb) + '/lb' : money(best.casePrice)}`;
+  s.textContent = `${plural(opts.length, 'option')} · from ${fromText(best)}`;
   nm.appendChild(s);
   const chev = document.createElement('span');
   chev.className = 'chev';
@@ -628,7 +645,8 @@ function addFamily(list, p, e) {
     vn.innerHTML = `<div class="t">${esc(label)}${i === 0 ? '<span class="chip cheap">CHEAPEST</span>' : ''}${o.onAd ? '<span class="chip ad">ON AD</span>' : ''}</div><div class="s">#${esc(o.code)}</div>`;
     const pr = document.createElement('div');
     pr.className = 'pr';
-    pr.innerHTML = money(o.casePrice) + (o.perLb != null ? `<small>${money(o.perLb)}/lb</small>` : '');
+    const each = eachText(o.description, o.casePrice);
+    pr.innerHTML = money(o.casePrice) + (o.perLb != null ? `<small>${money(o.perLb)}/lb</small>` : each ? `<small>${each}</small>` : '');
     vr.append(vn, pr, makeQty(qk, label, true));
     list.appendChild(vr);
   });
@@ -1008,7 +1026,7 @@ function foundText(p, st) {
       return repl + `<div class="dead-note">Not on Four Seasons. It may be obsolete or mistyped.</div><span class="muted">Type a new item # or search words.</span>`;
     case 'options': {
       const best = e.options[0];
-      return repl + `<span class="ok">✓</span> ${plural(e.options.length, 'option')} · from ${best.perLb != null ? money(best.perLb) + '/lb' : money(best.casePrice)}`;
+      return repl + `<span class="ok">✓</span> ${plural(e.options.length, 'option')} · from ${fromText(best)}`;
     }
     case 'none':
       return repl + '<span class="muted">No matches this week</span>';
