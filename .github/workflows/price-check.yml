@@ -27,6 +27,14 @@ on:
         description: "Save screenshots of any problems"
         type: boolean
         default: false
+      report:
+        description: "Also email the weekly price report (it runs by itself on Mondays)"
+        type: boolean
+        default: false
+      report_only:
+        description: "Skip the price check and just email the report from the saved prices"
+        type: boolean
+        default: false
   push:
     branches: [redesign-backend]
     paths: ["pricecheck/**", ".github/workflows/price-check.yml"]
@@ -51,6 +59,7 @@ jobs:
             echo "Not 6 AM in Virginia right now, skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
+          if [ "$(TZ=America/New_York date +%u)" = "1" ]; then echo "monday=true" >> "$GITHUB_OUTPUT"; fi
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.skip != 'true'
@@ -71,7 +80,7 @@ jobs:
         run: node --test
 
       - name: Check prices
-        if: steps.gate.outputs.skip != 'true'
+        if: steps.gate.outputs.skip != 'true' && github.event.inputs.report_only != 'true'
         env:
           FS_EMAIL: ${{ secrets.FS_EMAIL }}
           FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
@@ -81,6 +90,16 @@ jobs:
           DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
           SHOTS_DIR: ${{ (github.event.inputs.screenshots == 'true' || github.event_name == 'push') && 'shots' || '' }}
         run: node check.mjs
+
+      # Monday mornings (Virginia time), after the full check: email what changed.
+      - name: Weekly price report
+        if: >-
+          steps.gate.outputs.skip != 'true' && (
+            github.event.inputs.report == 'true' || github.event.inputs.report_only == 'true' ||
+            (github.event_name == 'schedule' && steps.gate.outputs.monday == 'true'))
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+        run: node report.mjs
 
       - name: Keep screenshots
         if: always() && steps.gate.outputs.skip != 'true'
