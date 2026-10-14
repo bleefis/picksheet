@@ -80,11 +80,12 @@ export default async req => {
   if (!r || !r.createdAt || Date.now() - new Date(r.createdAt) > 30 * 60e3) return json({ error: 'Nothing to report' }, 400);
   r.ordered = r.ordered || []; r.items = r.items || [];
   const all = r.ordered.concat(r.items);
-  const ups = all.filter(x => x.change > 0).length, downs = all.filter(x => x.change < 0).length;
+  // Count each item number once, even if it is both ordered and set up by item #.
+  const ups = new Set(all.filter(x => x.change > 0).map(x => x.id)).size, downs = all.filter(x => x.change < 0).length;
   try {
     await sendMail({
       to: ORDER_EMAIL,
-      subject: `Price check ${day(r.date)}: ${ups} up, ${downs} down` + (r.missing ? `, ${r.missing} not available` : ''),
+      subject: `Four Seasons Price Check, ${ups} Up`,
       html: reportHtml(r)
     });
   } catch (e) {
