@@ -27,6 +27,14 @@
         }
       }
     },
+    "price-history": {
+      ".read": false,
+      ".write": false
+    },
+    "price-reports": {
+      ".read": true,
+      ".write": false
+    },
     "$other": {
       ".read": false,
       ".write": false

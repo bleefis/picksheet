@@ -16,6 +16,7 @@
 import { chromium } from 'playwright';
 import { deleteApp, getApp } from 'firebase-admin/app';
 import { buildOptions } from './parse.mjs';
+import { saveSnapshot } from './history.mjs';
 import { ACCOUNTS, log, shot, initFirebase, signIn, signOut, switchAccount, search, obsoleteInfo, findItem } from './portal.mjs';
 
 const env = process.env;
@@ -125,7 +126,10 @@ async function main() {
       updates.running = null;
       await db.ref('prices').update(updates);
     } else {
-      await db.ref('prices').set({ checkedAt: new Date().toISOString(), products: entries, problems });
+      const saved = { checkedAt: new Date().toISOString(), products: entries, problems };
+      await db.ref('prices').set(saved);
+      // Keep a dated copy for the Monday price report.
+      log(`Saved price history for ${await saveSnapshot(db, saved)}`);
     }
     log('Saved to Firebase /prices');
   }
