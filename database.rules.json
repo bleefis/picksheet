@@ -21,6 +21,9 @@
         ".validate": "newData.hasChildren(['createdAt'])",
         "email": {
           ".write": "!data.exists()"
+        },
+        "start": {
+          ".write": "!data.exists()"
         }
       }
     },
