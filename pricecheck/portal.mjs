@@ -33,12 +33,23 @@ export function initFirebase() {
 
 // ── Portal ─────────────────────────────────────────────────
 export async function signIn(page) {
-  // The portal is sometimes slow to answer; give it a few tries.
+  // The portal is sometimes slow to answer, or shows something other than the
+  // login form right after a sign-out; give it a few tries.
+  const emailBox = page.locator('input[type="email"], input[name*="mail" i], input[id*="mail" i]').first();
   for (let tries = 1; ; tries++) {
-    try { await page.goto(`${PORTAL}/login`, { waitUntil: 'domcontentloaded', timeout: 60000 }); break; }
-    catch (e) { if (tries >= 3) throw e; log(`Login page slow, trying again (${tries})`); await page.waitForTimeout(15000); }
+    try {
+      await page.goto(`${PORTAL}/login`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await emailBox.waitFor({ timeout: 20000 });
+      break;
+    } catch (e) {
+      const text = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
+      log(`Login form not showing (try ${tries}) at ${page.url()}: ${text.slice(0, 300)}`);
+      if (tries >= 3) { await shot(page, 'login-form-missing'); throw e; }
+      await page.context().clearCookies();
+      await page.waitForTimeout(10000);
+    }
   }
-  await page.locator('input[type="email"], input[name*="mail" i], input[id*="mail" i]').first().fill(env.FS_EMAIL);
+  await emailBox.fill(env.FS_EMAIL);
   await page.locator('input[type="password"]').first().fill(env.FS_PASSWORD);
   await page.getByRole('button', { name: /next|sign in|log in/i }).first().click();
   await page.waitForURL(u => !/\/login\/?$/i.test(u.pathname), { timeout: 30000 });

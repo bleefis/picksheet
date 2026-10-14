@@ -83,14 +83,36 @@ async function removeItems(page, spec) {
     for (const code of codes.split(',').map(c => c.trim()).filter(Boolean)) {
       await page.goto(`${PORTAL}/shopping-cart`, { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-      const row = page.locator('tr, li, .row').filter({ has: page.locator(`a[href*="/item-content/${code}/"]`) })
-        .filter({ has: page.locator('button.btn-remove-shopping-cart') }).last();
-      if (!(await row.count())) { log(`${LABEL[acct]}: #${code} not in cart`); continue; }
-      await row.locator('button.btn-remove-shopping-cart').first().click();
+      const found = await page.evaluate((code) => {
+        document.querySelectorAll('[data-robot-remove]').forEach(b => b.removeAttribute('data-robot-remove'));
+        // Start from each remove button (one per cart line) and widen to the
+        // biggest box that still holds only that button: that box is its line.
+        const btns = [...document.querySelectorAll('button.btn-remove-shopping-cart')]
+          .filter(b => !b.closest('.modal, .floating-carts'));
+        const re = new RegExp(`(^|\\D)${code}(\\D|$)`);
+        for (const btn of btns) {
+          let line = btn;
+          while (line.parentElement && line.parentElement !== document.body &&
+                 line.parentElement.querySelectorAll('button.btn-remove-shopping-cart').length === 1 &&
+                 !line.parentElement.querySelector('.floating-carts')) line = line.parentElement;
+          if (re.test(line.innerText || '')) { btn.setAttribute('data-robot-remove', '1'); return { ok: true }; }
+        }
+        const first = btns[0];
+        let box = first; for (let i = 0; first && i < 6 && box.parentElement; i++) box = box.parentElement;
+        return { ok: false, removeButtons: btns.length, around: box ? box.outerHTML.replace(/\s+/g, ' ').slice(0, 2500) : '' };
+      }, code);
+      if (!found.ok) {
+        log(`${LABEL[acct]}: #${code} remove button not found (${found.removeButtons} cart lines with a remove button)`);
+        if (found.around) log(`  HTML near it: ${found.around}`);
+        continue;
+      }
+      await page.locator('[data-robot-remove]').first().click();
       await page.waitForTimeout(1500);
-      const yes = page.locator('.modal:visible button, [role=dialog]:visible button').filter({ hasText: /^\s*(yes|ok|remove|confirm|continue)\s*$/i });
+      const yes = page.locator('.modal:visible button, [role=dialog]:visible button').filter({ hasText: /^\s*(yes|ok|remove|delete|confirm|continue)\s*$/i });
       if (await yes.count()) await yes.first().click();
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      const left = await cartItems(page);
+      if (left.items.some(i => i.code === code)) { log(`${LABEL[acct]}: #${code} STILL in cart after remove`); continue; }
       log(`${LABEL[acct]}: removed #${code}`);
     }
     await cartItems(page);
@@ -174,6 +196,7 @@ async function main() {
         if (imported) {
           // Signing out and back in is what empties the import table.
           await signOut(page);
+          await page.context().clearCookies();
           await signIn(page);
         }
         imported = true;
