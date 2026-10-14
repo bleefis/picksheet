@@ -123,8 +123,13 @@ async function main() {
   const db = initFirebase();
   const ref = db.ref(`orders/${ID}`);
   let order = (await ref.get()).val();
-  if (!order && DRY_RUN) order = { createdAt: new Date().toISOString(),     // a look-only test with no real order
+  // A test order (look-only, or a real 1-case test run by hand) when no real order is given.
+  const SAMPLE = { createdAt: new Date().toISOString(), test: true,
     produce: [{ id: '43878', q: 1, name: 'OG Grapes Red Seedless PREM 19 lb' }], meat: [{ id: '231851', q: 1, name: 'OG Kefir Plain 6/32 oz' }] };
+  if (!order && (DRY_RUN || env.TEST_ORDER)) {
+    order = SAMPLE;
+    if (!DRY_RUN) await ref.set(order);
+  }
   if (!order) throw new Error(`Order ${ID} not found.`);
   if (order.robot && order.robot.state === 'done' && !DRY_RUN) { log('Already loaded; not loading twice.'); return; }
   const set = (p, v) => DRY_RUN ? Promise.resolve(log(`(dry run) robot/${p} =`, JSON.stringify(v))) : ref.child('robot/' + p).set(v);
