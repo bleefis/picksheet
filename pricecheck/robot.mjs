@@ -196,6 +196,7 @@ async function main() {
         if (imported) {
           // Signing out and back in is what empties the import table.
           await signOut(page);
+          await page.context().clearCookies();
           await signIn(page);
         }
         imported = true;
