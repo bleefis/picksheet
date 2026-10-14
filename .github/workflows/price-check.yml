@@ -1,0 +1,87 @@
+# Daily Four Seasons price check for the picksheet app.
+# Runs at 6 AM Virginia time and saves this week's options and prices to
+# Firebase (/prices). Can also be run by hand from the Actions tab.
+name: Daily price check
+
+on:
+  schedule:
+    # GitHub schedules use UTC. 6 AM in Virginia is 10:00 UTC in summer and
+    # 11:00 UTC in winter, so both run and the "6 AM only" step skips the other.
+    - cron: "0 10 * * *"
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Check only these items (comma separated). Leave blank for all. Partial checks are never saved."
+        required: false
+        default: ""
+      dry_run:
+        description: "Look up prices without saving them"
+        type: boolean
+        default: false
+      screenshots:
+        description: "Save screenshots of any problems"
+        type: boolean
+        default: false
+  push:
+    branches: [price-check]
+    paths: ["pricecheck/**", ".github/workflows/price-check.yml"]
+
+concurrency:
+  group: price-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: pricecheck
+    steps:
+      - name: 6 AM only
+        id: gate
+        working-directory: .
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/New_York date +%H)" != "06" ]; then
+            echo "Not 6 AM in Virginia right now, skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          node-version: 22
+
+      - name: Install
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Unit tests
+        if: steps.gate.outputs.skip != 'true'
+        run: node --test
+
+      - name: Check prices
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          FS_EMAIL: ${{ secrets.FS_EMAIL }}
+          FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+          ONLY: ${{ github.event.inputs.only || (github.event_name == 'push' && 'Apples,Grapes,Avocados,Bacon Sunday' || '') }}
+          DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
+          SHOTS_DIR: ${{ (github.event.inputs.screenshots == 'true' || github.event_name == 'push') && 'shots' || '' }}
+        run: node check.mjs
+
+      - name: Keep screenshots
+        if: always() && steps.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-check-screenshots
+          path: pricecheck/shots
+          if-no-files-found: ignore
+          retention-days: 3
