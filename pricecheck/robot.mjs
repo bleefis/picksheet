@@ -2,8 +2,9 @@
 //
 // For each account with items (Produce 94273, then Meat & Dairy 94274):
 //   switch account → note what's already in the cart → Import Order with a CSV
-//   → note obsolete items (the yellow bar) → Add All to Cart → clear the import
-//   table so the next account starts empty → note the cart afterwards.
+//   → note obsolete items (the yellow bar) → Add All to Cart → note the cart
+//   afterwards. The import table lasts for the whole sign-in, so the robot signs
+//   out and back in before the second account.
 // Nothing is ever submitted. Progress goes to Firebase /orders/{id}/robot,
 // which the phone shows live, and a summary email is sent at the end.
 //
@@ -70,23 +71,56 @@ function buildCsv(lines, columns) {
   return [cols.join(',')].concat(lines.map(l => cols.map(c => pick(c, l)).join(','))).join('\r\n') + '\r\n';
 }
 
-/** Clear the import table so the next account's import starts empty. */
-async function clearImport(page) {
-  await page.goto(`${PORTAL}/secure/account/import-order`, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-  const clear = page.locator('button:visible, a:visible, input[type=button]:visible').filter({ hasText: /^\s*(cancel|clear|remove all|delete all|cancel import)\s*$/i });
-  log(`Import page buttons: ${(await page.locator('button:visible, a.btn:visible').allInnerTexts()).map(clean).filter(Boolean).join(' | ').slice(0, 300)}`);
-  if (!(await clear.count())) { log('Import table: nothing to clear'); return; }
-  await clear.first().click();
-  await page.waitForTimeout(1500);
-  const yes = page.locator('.modal:visible button, [role=dialog]:visible button').filter({ hasText: /^\s*(yes|ok|confirm|continue)\s*$/i });
-  if (await yes.count()) await yes.first().click();
-  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-  log('Import table cleared');
+/**
+ * Take test lines back out of the carts: REMOVE="produce:43878;meat:43878,231851"
+ * removes one cart line per item # in each account.
+ */
+async function removeItems(page, spec) {
+  for (const part of spec.split(';')) {
+    const [acct, codes] = part.split(':');
+    if (!ACCOUNTS[acct] || !codes) continue;
+    await switchAccount(page, ACCOUNTS[acct]);
+    for (const code of codes.split(',').map(c => c.trim()).filter(Boolean)) {
+      await page.goto(`${PORTAL}/shopping-cart`, { waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      const found = await page.evaluate((code) => {
+        document.querySelectorAll('[data-robot-remove]').forEach(b => b.removeAttribute('data-robot-remove'));
+        // Start from each remove button (one per cart line) and widen to the
+        // biggest box that still holds only that button: that box is its line.
+        const btns = [...document.querySelectorAll('button.btn-remove-shopping-cart')]
+          .filter(b => !b.closest('.modal, .floating-carts'));
+        const re = new RegExp(`(^|\\D)${code}(\\D|$)`);
+        for (const btn of btns) {
+          let line = btn;
+          while (line.parentElement && line.parentElement !== document.body &&
+                 line.parentElement.querySelectorAll('button.btn-remove-shopping-cart').length === 1 &&
+                 !line.parentElement.querySelector('.floating-carts')) line = line.parentElement;
+          if (re.test(line.innerText || '')) { btn.setAttribute('data-robot-remove', '1'); return { ok: true }; }
+        }
+        const first = btns[0];
+        let box = first; for (let i = 0; first && i < 6 && box.parentElement; i++) box = box.parentElement;
+        return { ok: false, removeButtons: btns.length, around: box ? box.outerHTML.replace(/\s+/g, ' ').slice(0, 2500) : '' };
+      }, code);
+      if (!found.ok) {
+        log(`${LABEL[acct]}: #${code} remove button not found (${found.removeButtons} cart lines with a remove button)`);
+        if (found.around) log(`  HTML near it: ${found.around}`);
+        continue;
+      }
+      await page.locator('[data-robot-remove]').first().click();
+      await page.waitForTimeout(1500);
+      const yes = page.locator('.modal:visible button, [role=dialog]:visible button').filter({ hasText: /^\s*(yes|ok|remove|delete|confirm|continue)\s*$/i });
+      if (await yes.count()) await yes.first().click();
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      const left = await cartItems(page);
+      if (left.items.some(i => i.code === code)) { log(`${LABEL[acct]}: #${code} STILL in cart after remove`); continue; }
+      log(`${LABEL[acct]}: removed #${code}`);
+    }
+    await cartItems(page);
+  }
 }
 
 /** Import one account's CSV and add everything to its cart. */
-async function importAndAdd(page, csv, acct) {
+async function importAndAdd(page, csv, acct, expected) {
   await page.goto(`${PORTAL}/secure/account/import-order`, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   const file = path.join(os.tmpdir(), `order-${acct}.csv`);
@@ -101,6 +135,10 @@ async function importAndAdd(page, csv, acct) {
   const text = await page.locator('body').innerText().catch(() => '');
   log(`After import: ${clean(text).slice(0, 1500)}`);
   await shot(page, `imported-${acct}`);
+  // The import table belongs to the sign-in, not the account. If it holds more lines than
+  // this account's order, stop before anything reaches the wrong cart.
+  const imported = Number((clean(text).match(/IMPORTED ITEMS \((\d+)\)/i) || [])[1]);
+  if (imported > expected) throw new Error(`The import table held ${imported} lines but this order has ${expected}. Stopped before adding anything to the cart.`);
 
   // The yellow bar names each obsolete line, e.g. "OG Grapes Red MEX|43884 Obsolete item #. Check Replacements"
   const obsolete = [...new Set([...text.matchAll(/([^\n|]*\|\s*\d+)\s*Obsolete item/gi)].map(m => clean(m[1]).replace(/\s*\|\s*/, ' #')))];
@@ -119,12 +157,24 @@ async function importAndAdd(page, csv, acct) {
 }
 
 async function main() {
+  if (env.REMOVE) {
+    const browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+    try { await signIn(page); await removeItems(page, env.REMOVE); }
+    finally { await signOut(page).catch(() => {}); await browser.close(); }
+    return;
+  }
   for (const k of ['FS_EMAIL', 'FS_PASSWORD', 'FIREBASE_KEY', 'ORDER_ID']) if (!env[k]) throw new Error(`Missing ${k}.`);
   const db = initFirebase();
   const ref = db.ref(`orders/${ID}`);
   let order = (await ref.get()).val();
-  if (!order && DRY_RUN) order = { createdAt: new Date().toISOString(),     // a look-only test with no real order
+  // A test order (look-only, or a real 1-case test run by hand) when no real order is given.
+  const SAMPLE = { createdAt: new Date().toISOString(), test: true,
     produce: [{ id: '43878', q: 1, name: 'OG Grapes Red Seedless PREM 19 lb' }], meat: [{ id: '231851', q: 1, name: 'OG Kefir Plain 6/32 oz' }] };
+  if (!order && (DRY_RUN || env.TEST_ORDER)) {
+    order = SAMPLE;
+    if (!DRY_RUN) await ref.set(order);
+  }
   if (!order) throw new Error(`Order ${ID} not found.`);
   if (order.robot && order.robot.state === 'done' && !DRY_RUN) { log('Already loaded; not loading twice.'); return; }
   const set = (p, v) => DRY_RUN ? Promise.resolve(log(`(dry run) robot/${p} =`, JSON.stringify(v))) : ref.child('robot/' + p).set(v);
@@ -134,6 +184,7 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   let failed = false;
+  let imported = false;
   try {
     await signIn(page);
     const columns = await templateColumns(page);
@@ -142,10 +193,16 @@ async function main() {
       if (!lines.length) { log(`${LABEL[acct]}: nothing ordered`); continue; }
       await set(acct, { state: 'running' });
       try {
+        if (imported) {
+          // Signing out and back in is what empties the import table.
+          await signOut(page);
+          await page.context().clearCookies();
+          await signIn(page);
+        }
+        imported = true;
         await switchAccount(page, ACCOUNTS[acct]);
         const before = await cartItems(page);
-        const { obsolete } = await importAndAdd(page, buildCsv(lines, columns), acct);
-        await clearImport(page).catch(e => log(`Clearing the import table failed: ${e.message}`));
+        const { obsolete } = await importAndAdd(page, buildCsv(lines, columns), acct, lines.length);
         const after = await cartItems(page);
         const had = new Map(before.items.map(i => [i.code, i]));
         const overlaps = lines.filter(l => had.has(String(l.id)))
@@ -168,7 +225,6 @@ async function main() {
         log(`${LABEL[acct]}: FAILED ${e.message}`);
         await shot(page, `failed-${acct}`);
         await set(acct, { state: 'failed', error: e.message.slice(0, 300) });
-        await clearImport(page).catch(() => {});
       }
     }
   } catch (e) {
