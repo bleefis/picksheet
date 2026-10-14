@@ -593,14 +593,14 @@ function addPlain(list, p, st) {
   let usable = true;
   if (st.kind === 'item') {
     const each = e ? eachText(e.description, e.casePrice) : '';
-    s.textContent = '#' + p.lookup.trim() + (e && e.casePrice ? ' · ' + money(e.casePrice) : '') + (each ? ' · ' + each : '');
+    s.textContent = [e && e.casePrice ? money(e.casePrice) : '', each].filter(Boolean).join(' · ');
     if (e && e.onAd) s.insertAdjacentHTML('beforeend', '<span class="chip ad">ON AD</span>');
   } else {
     usable = false;
     s.className = st.kind === 'dead' ? 's bad' : 's na';
     s.textContent = st.kind === 'dead' ? 'Obsolete, no replacement yet' : st.kind === 'none' ? 'Not available this week' : 'Options not checked yet';
   }
-  nm.appendChild(s);
+  if (s.textContent) nm.appendChild(s);
   if (!usable) row.classList.add('dim');
   row.append(nm, makeQty(p.key, p.name, usable));
   list.appendChild(row);
@@ -642,7 +642,7 @@ function addFamily(list, p, e) {
     const vn = document.createElement('div');
     vn.className = 'nm';
     const label = shortName(o.description, e.lookup);
-    vn.innerHTML = `<div class="t">${esc(label)}${i === 0 ? '<span class="chip cheap">CHEAPEST</span>' : ''}${o.onAd ? '<span class="chip ad">ON AD</span>' : ''}</div><div class="s">#${esc(o.code)}</div>`;
+    vn.innerHTML = `<div class="t">${esc(label)}${i === 0 ? '<span class="chip cheap">CHEAPEST</span>' : ''}${o.onAd ? '<span class="chip ad">ON AD</span>' : ''}</div>`;
     const pr = document.createElement('div');
     pr.className = 'pr';
     const each = eachText(o.description, o.casePrice);
