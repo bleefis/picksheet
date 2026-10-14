@@ -32,7 +32,7 @@ on:
     paths: ["pricecheck/**", ".github/workflows/price-check.yml"]
 
 concurrency:
-  group: price-check
+  group: four-seasons-portal
   cancel-in-progress: false
 
 jobs:
