@@ -1,0 +1,19 @@
+# Uploads database.rules.json to Firebase whenever it changes on main
+# (or on the redesign-backend branch while it's being built).
+name: Update database rules
+on:
+  push:
+    branches: [main, redesign-backend]
+    paths: ["database.rules.json"]
+  workflow_dispatch:
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: pricecheck } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - env: { FIREBASE_KEY: "${{ secrets.FIREBASE_KEY }}" }
+        run: node rules.mjs

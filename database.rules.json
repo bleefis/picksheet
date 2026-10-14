@@ -1,0 +1,35 @@
+{
+  "rules": {
+    "order-config": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.hasChildren(['items'])"
+    },
+    "products": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.hasChildren(['items'])"
+    },
+    "prices": {
+      ".read": true,
+      ".write": false
+    },
+    "orders": {
+      ".read": true,
+      "$id": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['createdAt'])",
+        "email": {
+          ".write": "!data.exists()"
+        },
+        "start": {
+          ".write": "!data.exists()"
+        }
+      }
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
