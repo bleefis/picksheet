@@ -1,0 +1,58 @@
+# Cart robot: started by the phone's "Send order" (through the app's Netlify
+# function). Loads the order into the Produce and Meat & Dairy carts on Four
+# Seasons. Nothing is submitted.
+name: Cart robot
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_id:
+        description: "Order to load (from Firebase /orders)"
+        required: true
+      dry_run:
+        description: "Sign in and look, but don't import anything"
+        type: boolean
+        default: false
+  # Look-only test while the robot is being built (never imports).
+  push:
+    branches: [redesign-backend]
+    paths: ["pricecheck/robot.mjs", "pricecheck/portal.mjs", ".github/workflows/cart-robot.yml"]
+
+# One Four Seasons sign-in at a time: the price check and the robot take turns.
+concurrency:
+  group: four-seasons-portal
+  cancel-in-progress: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: pricecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Load carts
+        env:
+          FS_EMAIL: ${{ secrets.FS_EMAIL }}
+          FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+          ORDER_ID: ${{ github.event.inputs.order_id || 'look-only-test' }}
+          DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
+          SHOTS_DIR: shots
+        run: node robot.mjs
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cart-robot-screenshots
+          path: pricecheck/shots
+          if-no-files-found: ignore
+          retention-days: 7

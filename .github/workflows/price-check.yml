@@ -15,6 +15,10 @@ on:
         description: "Check only these items (comma separated). Leave blank for all. Partial checks are never saved."
         required: false
         default: ""
+      keys:
+        description: "Check only these product rows (used by Check now). Leave blank for all."
+        required: false
+        default: ""
       dry_run:
         description: "Look up prices without saving them"
         type: boolean
@@ -24,11 +28,11 @@ on:
         type: boolean
         default: false
   push:
-    branches: [price-check]
+    branches: [redesign-backend]
     paths: ["pricecheck/**", ".github/workflows/price-check.yml"]
 
 concurrency:
-  group: price-check
+  group: four-seasons-portal
   cancel-in-progress: false
 
 jobs:
@@ -72,7 +76,8 @@ jobs:
           FS_EMAIL: ${{ secrets.FS_EMAIL }}
           FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
-          ONLY: ${{ github.event.inputs.only || (github.event_name == 'push' && 'Apples,Grapes,Avocados,Bacon Sunday' || '') }}
+          ONLY: ${{ github.event.inputs.only || (github.event_name == 'push' && 'Apples,Grapes,Avocados,Cheese Cottage,Sour Cream,Sauerkraut Garlic Dill' || '') }}
+          KEYS: ${{ github.event.inputs.keys }}
           DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
           SHOTS_DIR: ${{ (github.event.inputs.screenshots == 'true' || github.event_name == 'push') && 'shots' || '' }}
         run: node check.mjs
