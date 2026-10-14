@@ -85,7 +85,7 @@ export default async req => {
   try {
     await sendMail({
       to: ORDER_EMAIL,
-      subject: `Four Seasons Price Check, ${ups} Up`,
+      subject: `Four Seasons Price Check, ${ups} Increase${ups === 1 ? "" : "s"}`,
       html: reportHtml(r)
     });
   } catch (e) {
