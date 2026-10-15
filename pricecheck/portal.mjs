@@ -78,15 +78,16 @@ export async function signIn(page) {
  *  already logged in"), so click the portal's own Sign Out first, then check
  *  that a signed-in page really sends us back to the login form. */
 export async function signOut(page) {
-  const btn = page.locator('a, button, input[type=submit], span, li')
-    .filter({ hasText: /^\s*(sign|log) ?(out|off)\s*$/i }).first();
+  // The portal's Sign Out is <a class="sc-js-profile-logout"> inside the
+  // hidden profile menu; its script ends the session, so click it in place.
+  const btn = page.locator('.sc-js-profile-logout, a:text-matches("^\\s*sign ?out\\s*$", "i")').first();
   if (await btn.count().catch(() => 0)) {
-    log(`Sign out control: ${(await btn.evaluate(el => el.outerHTML).catch(() => '?')).slice(0, 300)}`);
     await Promise.all([
-      page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {}),
-      btn.click({ timeout: 10000 }).catch(e => log(`Sign out click failed: ${e.message}`))
+      page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
+      btn.evaluate(el => el.click()).catch(e => log(`Sign out click failed: ${e.message}`))
     ]);
-    await page.waitForTimeout(3000);
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    log(`Clicked Sign Out (now at ${new URL(page.url()).pathname})`);
   } else {
     log('Sign out control: none found');
   }
