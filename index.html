@@ -979,10 +979,14 @@ function setupRow(p, i) {
     <td><label class="sw" title="Show on the phone"><input type="checkbox"${p.hidden ? '' : ' checked'}><span></span></label></td>
     <td><button class="del" title="Delete" aria-label="Delete">✕</button></td>`;
 
+  // The shared list is reloaded from Firebase after every save, which swaps in
+  // fresh row objects. Always edit the current copy, found by its key, or
+  // later keystrokes land on a stale copy and are lost.
+  const cur = () => products.find(x => x.key === p.key) || p;
   tr.querySelectorAll('input.cell').forEach(inp => {
     const f = inp.dataset.f;
     inp.addEventListener('input', () => {
-      p[f] = inp.value;
+      cur()[f] = inp.value;
       if (f === 'lookup') {
         const now = isItemNo(inp.value);
         const tag = tr.querySelector('.tag');
@@ -997,19 +1001,20 @@ function setupRow(p, i) {
     });
     inp.addEventListener('change', () => {
       if (f !== 'lookup') return;
-      p.lookup = inp.value.trim();
-      if (p.replaced) delete p.replaced;   // typing a new lookup replaces the automatic swap
-      delete p.keepOld;
+      const q = cur();
+      q.lookup = inp.value.trim();
+      if (q.replaced) delete q.replaced;   // typing a new lookup replaces the automatic swap
+      delete q.keepOld;
       saveProducts();
       setTimeout(() => { if (!editing()) renderSetup(); }, 0);
     });
     inp.addEventListener('blur', () => setTimeout(() => { if (!editing() && f === 'lookup') renderSetup(); }, 0));
   });
-  tr.querySelectorAll('.seg button').forEach(b => b.onclick = () => { p.account = b.dataset.a; saveProducts(); renderSetup(); });
-  tr.querySelector('.sw input').onchange = e => { p.hidden = !e.target.checked; saveProducts(); tr.classList.toggle('hiddenrow', p.hidden); };
-  tr.querySelector('.del').onclick = () => confirmDelete(p);
+  tr.querySelectorAll('.seg button').forEach(b => b.onclick = () => { cur().account = b.dataset.a; saveProducts(); renderSetup(); });
+  tr.querySelector('.sw input').onchange = e => { const q = cur(); q.hidden = !e.target.checked; saveProducts(); tr.classList.toggle('hiddenrow', q.hidden); };
+  tr.querySelector('.del').onclick = () => confirmDelete(cur());
   const undo = tr.querySelector('[data-undo]');
-  if (undo) undo.onclick = () => undoReplace(p);
+  if (undo) undo.onclick = () => undoReplace(cur());
   dragRow(tr);
   return tr;
 }
@@ -1051,7 +1056,7 @@ function confirmDelete(p) {
     <div class="acts"><button class="btn block" id="yes-btn" style="background:var(--danger)">Delete</button><button class="btn ghost block" id="no-btn">Cancel</button></div>`);
   sheet.querySelector('#no-btn').onclick = closeSheet;
   sheet.querySelector('#yes-btn').onclick = () => {
-    products = products.filter(x => x !== p);
+    products = products.filter(x => x.key !== p.key);
     Object.keys(qty).forEach(k => { if (k === p.key || k.startsWith(p.key + VAR_SEP)) delete qty[k]; });
     saveQty(); saveProducts(); closeSheet(); renderSetup();
   };
