@@ -434,7 +434,10 @@ function stateOf(p) {
     return { kind: 'item', entry: e };
   }
   if (!e) return { kind: 'waiting' };
-  if (Array.isArray(e.options) && e.options.length) return { kind: 'options', entry: e };
+  // Apply "Leave out words" right away, without waiting for the next price check.
+  const words = String(p.exclude || '').split(/[,;]/).map(w => w.trim().toLowerCase()).filter(Boolean);
+  const options = (Array.isArray(e.options) ? e.options : []).filter(o => !words.some(w => String(o.description).toLowerCase().includes(w)));
+  if (options.length) return { kind: 'options', entry: { ...e, options } };
   return { kind: 'none', entry: e };
 }
 
