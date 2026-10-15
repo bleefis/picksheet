@@ -18,6 +18,7 @@ export default async req => {
     const label = ACCOUNTS[acct].label;
     const lines = order[acct] || [];
     if (!lines.length) return `<p><b>${label}</b>: nothing ordered this week, cart left alone.</p>`;
+    if (r.state === 'partial') return `<p style="color:#b3261e"><b>${label} (${ACCOUNTS[acct].number}): only ${r.added} of ${r.expected} items reached the cart.</b> Cart before: ${esc(r.before)}. Cart after: ${esc(r.after)}. Compare the cart with the order email and add the rest by hand.</p>`;
     if (r.state !== 'done') return `<p style="color:#b3261e"><b>${label}: cart NOT loaded.</b> ${esc(r.error || robot.error || 'Unknown problem')}. Import the CSV from the order email by hand.</p>`;
     let html = `<p><b>${label} (${ACCOUNTS[acct].number})</b>: ${r.added} item${r.added === 1 ? '' : 's'} added.`;
     if (r.before) html += ` Cart before: ${esc(r.before)}.`;
