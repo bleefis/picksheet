@@ -88,6 +88,7 @@ main.wide { max-width: none; padding: 0 0 40px; }
 .row .t { font-size: 15.5px; font-weight: 500; }
 .row.fam .t { font-weight: 700; }
 .row .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.row .s b.u { color: var(--ink); font-weight: 700; font-size: 13px; }
 .row .s.go { color: var(--accent-dk); font-weight: 700; }
 .row .s.bad { color: var(--danger); font-weight: 700; }
 .row .s.na { font-style: italic; }
@@ -600,8 +601,9 @@ function addPlain(list, p, st) {
   s.className = 's';
   let usable = true;
   if (st.kind === 'item') {
-    const each = e ? eachText(e.description, e.casePrice) : '';
-    s.textContent = [e && e.casePrice ? money(e.casePrice) : '', each].filter(Boolean).join(' · ');
+    const unit = e ? (e.perLb != null ? money(e.perLb) + '/lb' : eachText(e.description, e.casePrice)) : '';
+    const cs = e && e.casePrice ? money(e.casePrice) : '';
+    s.innerHTML = unit ? `<b class="u">${esc(unit)}</b>${cs ? ' · ' + cs + ' case' : ''}` : cs ? `<b class="u">${cs}</b> case` : '';
     if (e && e.onAd) s.insertAdjacentHTML('beforeend', '<span class="chip ad">ON AD</span>');
   } else {
     usable = false;
@@ -654,7 +656,8 @@ function addFamily(list, p, e) {
     const pr = document.createElement('div');
     pr.className = 'pr';
     const each = eachText(o.description, o.casePrice);
-    pr.innerHTML = money(o.casePrice) + (o.perLb != null ? `<small>${money(o.perLb)}/lb</small>` : each ? `<small>${each}</small>` : '');
+    const unit = o.perLb != null ? money(o.perLb) + '/lb' : each;
+    pr.innerHTML = unit ? `${unit}<small>${money(o.casePrice)} case</small>` : money(o.casePrice);
     vr.append(vn, pr, makeQty(qk, label, true));
     list.appendChild(vr);
   });
