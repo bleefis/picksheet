@@ -414,7 +414,8 @@ function saveQty() { writeLocal(KEY_QTY, qty); }
 function entryFor(p) {
   if (!prices) return null;
   const e = prices.products && prices.products[p.key];
-  if (e) return norm(e.lookup) === norm(p.lookup) ? e : null;
+  // A row is stale if its item # / search words changed, or it was moved to the other account since the check.
+  if (e) return norm(e.lookup) === norm(p.lookup) && (!e.account || e.account === (p.account === 'meat' ? 'meat' : 'produce')) ? e : null;
   // Prices saved before the redesign are listed by name
   if (prices.sections) {
     for (const list of Object.values(prices.sections)) {
