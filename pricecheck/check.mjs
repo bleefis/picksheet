@@ -16,6 +16,7 @@
 import { chromium } from 'playwright';
 import { deleteApp, getApp } from 'firebase-admin/app';
 import { buildOptions } from './parse.mjs';
+import { saveSnapshot } from './history.mjs';
 import { ACCOUNTS, log, shot, initFirebase, signIn, signOut, switchAccount, search, obsoleteInfo, findItem } from './portal.mjs';
 
 const env = process.env;
@@ -50,6 +51,7 @@ async function main() {
   const entries = {};
   const swaps = [];       // automatic replacements to save into the product table
   const problems = [];
+  let done = 0;
 
   try {
     await signIn(page);
@@ -58,6 +60,8 @@ async function main() {
       if (!mine.length) continue;
       await switchAccount(page, ACCOUNTS[account]);
       for (const p of mine) {
+        // Progress for the phone ("34 of 118"); not waited on, so it never slows the check.
+        if (!DRY_RUN) db.ref('prices/running').update({ done: done++, total: todo.length, at: new Date().toISOString() }).catch(() => {});
         const lookup = String(p.lookup).trim();
         try {
           if (isItemNo(lookup)) {
@@ -98,7 +102,8 @@ async function main() {
     }
   } catch (e) {
     await shot(page, 'failed');
-    if (!DRY_RUN) await db.ref('prices/running').remove().catch(() => {});
+    // Tell the app the check failed, so the Setup page can say so.
+    if (!DRY_RUN) await db.ref('prices').update({ running: null, failed: { at: new Date().toISOString(), noResponse: /timeout|net::|chrome-error/i.test(e.message) } }).catch(() => {});
     throw e;
   } finally {
     await signOut(page).catch(e => log(`Sign out failed: ${e.message}`));
@@ -112,6 +117,9 @@ async function main() {
     log('Dry run: not saving.');
   } else {
     // Save replacements into the product table, row by row, only if the row is unchanged since we read it.
+    // Remember which account each row was checked under, so the app knows to re-check it after a switch.
+    const acct = Object.fromEntries(todo.map(p => [p.key, p.account === 'meat' ? 'meat' : 'produce']));
+    for (const [k, v] of Object.entries(entries)) v.account = acct[k];
     const at = new Date().toISOString();
     for (const s of swaps) {
       const ref = db.ref(`products/items/${s.index}`);
@@ -123,9 +131,13 @@ async function main() {
       const updates = {};
       for (const [k, v] of Object.entries(entries)) updates[`products/${k}`] = v;
       updates.running = null;
+      updates.failed = null;
       await db.ref('prices').update(updates);
     } else {
-      await db.ref('prices').set({ checkedAt: new Date().toISOString(), products: entries, problems });
+      const saved = { checkedAt: new Date().toISOString(), products: entries, problems };
+      await db.ref('prices').set(saved);
+      // Keep a dated copy for the Monday price report.
+      log(`Saved price history for ${await saveSnapshot(db, saved)}`);
     }
     log('Saved to Firebase /prices');
   }

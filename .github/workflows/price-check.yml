@@ -1,16 +1,22 @@
 # Daily Four Seasons price check for the picksheet app.
-# Runs at 6 AM Virginia time and saves this week's options and prices to
+# Runs each morning (first try after 5 AM Virginia time) and saves this week's options and prices to
 # Firebase (/prices). Can also be run by hand from the Actions tab.
 name: Daily price check
 
 on:
   schedule:
-    # GitHub schedules use UTC. 6 AM in Virginia is 10:00 UTC in summer and
-    # 11:00 UTC in winter, so both run and the "6 AM only" step skips the other.
-    - cron: "0 10 * * *"
-    - cron: "0 11 * * *"
+    # The Netlify timer (netlify/functions/morning.mjs) starts the morning check
+    # on time. This GitHub timer is only a backup: it often starts runs hours
+    # late or skips them, so it tries every half hour from 5 AM; the "Morning only" step runs the first one that
+    # gets through and skips the rest. Times are UTC (9:00 UTC = 5 AM in
+    # Virginia in summer, 4 AM in winter).
+    - cron: "0,30 9-13 * * *"
   workflow_dispatch:
     inputs:
+      morning:
+        description: "Morning check (started by the Netlify timer): skip if prices are already in, email the report on Mondays"
+        type: boolean
+        default: false
       only:
         description: "Check only these items (comma separated). Leave blank for all. Partial checks are never saved."
         required: false
@@ -25,6 +31,14 @@ on:
         default: false
       screenshots:
         description: "Save screenshots of any problems"
+        type: boolean
+        default: false
+      report:
+        description: "Also email the weekly price report (it runs by itself on Mondays)"
+        type: boolean
+        default: false
+      report_only:
+        description: "Skip the price check and just email the report from the saved prices"
         type: boolean
         default: false
   push:
@@ -43,14 +57,23 @@ jobs:
       run:
         working-directory: pricecheck
     steps:
-      - name: 6 AM only
+      - name: Morning only
         id: gate
         working-directory: .
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/New_York date +%H)" != "06" ]; then
-            echo "Not 6 AM in Virginia right now, skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          hour=$((10#$(TZ=America/New_York date +%H)))
+          today=$(TZ=America/New_York date +%F)
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.morning }}" = "true" ]; then
+            # Already checked today (or one is running)? Then this late start isn't needed.
+            last=$(curl -s https://picksheet-8b2a0-default-rtdb.firebaseio.com/prices/checkedAt.json | tr -d '"')
+            lastday=$( [ -n "$last" ] && [ "$last" != "null" ] && TZ=America/New_York date -d "$last" +%F || echo none)
+            if [ "$hour" -lt 5 ] || [ "$hour" -gt 9 ]; then
+              echo "Outside 5-9 AM in Virginia ($hour), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+            elif [ "$lastday" = "$today" ]; then
+              echo "Prices already checked today ($last), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
+          if [ "$(TZ=America/New_York date +%u)" = "1" ]; then echo "monday=true" >> "$GITHUB_OUTPUT"; fi
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.skip != 'true'
@@ -71,7 +94,7 @@ jobs:
         run: node --test
 
       - name: Check prices
-        if: steps.gate.outputs.skip != 'true'
+        if: steps.gate.outputs.skip != 'true' && github.event.inputs.report_only != 'true'
         env:
           FS_EMAIL: ${{ secrets.FS_EMAIL }}
           FS_PASSWORD: ${{ secrets.FS_PASSWORD }}
@@ -81,6 +104,16 @@ jobs:
           DRY_RUN: ${{ (github.event.inputs.dry_run == 'true' || github.event_name == 'push') && '1' || '' }}
           SHOTS_DIR: ${{ (github.event.inputs.screenshots == 'true' || github.event_name == 'push') && 'shots' || '' }}
         run: node check.mjs
+
+      # Monday mornings (Virginia time), after the full check: email what changed.
+      - name: Weekly price report
+        if: >-
+          steps.gate.outputs.skip != 'true' && (
+            github.event.inputs.report == 'true' || github.event.inputs.report_only == 'true' ||
+            ((github.event_name == 'schedule' || github.event.inputs.morning == 'true') && steps.gate.outputs.monday == 'true'))
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+        run: node report.mjs
 
       - name: Keep screenshots
         if: always() && steps.gate.outputs.skip != 'true'

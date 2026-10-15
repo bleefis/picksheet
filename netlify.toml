@@ -30,14 +30,16 @@
 
 # Icons change rarely — cache them hard for fast installs.
 [[headers]]
-  for = "/icon-*.png"
+  for = "/icon*.png"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
 # Server functions: send-order (email + start the cart robot), check-now
-# (start a Four Seasons check), order-report (the robot's summary email).
-# They need GMAIL_USER, GMAIL_APP_PASSWORD and GITHUB_TOKEN in Netlify's
-# environment settings.
+# (start a Four Seasons check), order-report (the robot's summary email),
+# price-report (the Monday email), and morning, which runs on a timer
+# (Netlify's, which starts on time, unlike GitHub's): it starts the morning
+# price check and sends the 10 AM warning email. They need GMAIL_USER,
+# GMAIL_APP_PASSWORD and GITHUB_TOKEN in Netlify's environment settings.
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
