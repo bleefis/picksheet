@@ -165,6 +165,7 @@ main.wide { max-width: none; padding: 0 0 40px; }
 .desk-top .count { font-weight: 800; font-size: 16px; flex: 1; min-width: 140px; }
 .desk-top .chk { font-size: 12.5px; color: rgba(255,255,255,0.8); }
 .desk-top .chk.warn { color: #ffd38a; font-weight: 600; }
+.desk-top .chk.fail { color: #3a2a00; background: #ffd38a; padding: 5px 10px; border-radius: 8px; font-weight: 700; }
 .desk-top button { height: 34px; padding: 0 12px; border-radius: 9px; font-weight: 700; font-size: 13px; background: rgba(255,255,255,0.14); color: #fff; }
 .desk-top button.add { background: var(--accent); }
 .desk-top button:disabled { opacity: 0.6; cursor: default; }
@@ -196,6 +197,9 @@ input.cell.mono { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 .found .ok { color: var(--accent-dk); font-weight: 800; }
 .found .muted { color: var(--muted); }
 .found .repl-note { color: #7a5a00; font-weight: 700; }
+.found .repl-btns { display: flex; gap: 6px; margin: 4px 0 5px; }
+.found .repl-btns button { border-radius: 7px; padding: 3px 11px; font-weight: 700; font-size: 12px; background: #fff; color: var(--ink); border: 1px solid var(--line); }
+.found .repl-btns [data-confirm] { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 800; }
 .found .dead-note { color: var(--danger); font-weight: 700; }
 .found u { cursor: pointer; color: var(--accent-dk); font-weight: 700; }
 .seg { display: inline-flex; border: 1px solid #dfe5e1; border-radius: 8px; overflow: hidden; font-size: 12.5px; font-weight: 700; margin-top: 2px; }
@@ -394,9 +398,9 @@ function loadPrices() {
   db.ref('prices').on('value', snap => {
     const remote = snap.val();
     if (!remote) return;
-    const strip = x => JSON.stringify({ ...(x || {}), running: null });
+    const strip = x => JSON.stringify({ ...(x || {}), running: null, failed: null });
     const progressOnly = prices && strip(prices) === strip(remote);
-    if (remote.running) checkRequestedAt = 0;   // the check has started
+    if (remote.running || (remote.failed && Date.parse(remote.failed.at) > checkRequestedAt)) checkRequestedAt = 0;   // the check has started (or already failed)
     prices = remote;
     if (progressOnly) { updateCheckBar(); return; }   // just the "34 of 118" count changed
     writeLocal(KEY_PRICES, prices);
@@ -1027,13 +1031,15 @@ function setupRow(p, i) {
   tr.querySelector('.del').onclick = () => confirmDelete(cur());
   const undo = tr.querySelector('[data-undo]');
   if (undo) undo.onclick = () => undoReplace(cur());
+  const ok = tr.querySelector('[data-confirm]');
+  if (ok) ok.onclick = () => { delete cur().replaced; saveProducts(); renderSetup(); };
   dragRow(tr);
   return tr;
 }
 
 function foundText(p, st) {
   const e = st.entry;
-  const repl = p.replaced ? `<div class="repl-note">Replaced ${esc(p.replaced.at ? whenText(p.replaced.at) : '')}: #${esc(p.replaced.from)} was obsolete. <u data-undo>Undo</u></div>` : '';
+  const repl = p.replaced ? `<div class="repl-note">Replaced ${esc(p.replaced.at ? whenText(p.replaced.at) : '')}: #${esc(p.replaced.from)} was obsolete.</div><div class="repl-btns"><button data-confirm>Confirm</button><button data-undo>Undo</button></div>` : '';
   if (!p.lookup) return '<span class="muted">Type search words or an item #</span>';
   switch (st.kind) {
     case 'item':
@@ -1129,6 +1135,10 @@ function checkState() {
   }
   if (checkRequestedAt && now - checkRequestedAt < 5 * 60e3) return { busy: true, text: '⟳ Starting the check…' };
   if (checkRequestedAt) return { busy: false, text: '⚠ The check didn\'t start. Try again.', warn: true };
+  const f = prices && prices.failed;
+  if (f && f.at && (!prices.checkedAt || Date.parse(f.at) > Date.parse(prices.checkedAt))) {
+    return { busy: false, fail: true, text: f.noResponse ? '⚠ Refresh failed: Four Seasons didn\'t respond. Try again soon.' : '⚠ Refresh failed. Try again soon.' };
+  }
   return { busy: false, text: prices && prices.checkedAt ? 'Last checked ' + whenText(prices.checkedAt) : 'Not checked yet' };
 }
 
@@ -1138,6 +1148,7 @@ function updateCheckBar() {
   const st = checkState();
   chk.textContent = st.text;
   chk.classList.toggle('warn', !!st.warn);
+  chk.classList.toggle('fail', !!st.fail);
   const n = changedKeys().length;
   btn.disabled = st.busy;
   btn.textContent = st.busy ? 'Checking…'
