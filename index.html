@@ -163,6 +163,7 @@ main.wide { max-width: none; padding: 0 0 40px; }
 .desk-top { position: sticky; top: 63px; z-index: 15; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; background: #134a38; color: #fff; }
 .desk-top .count { font-weight: 800; font-size: 16px; flex: 1; min-width: 140px; }
 .desk-top .chk { font-size: 12.5px; color: rgba(255,255,255,0.8); }
+.desk-top .chk.warn { color: #ffd38a; font-weight: 600; }
 .desk-top button { height: 34px; padding: 0 12px; border-radius: 9px; font-weight: 700; font-size: 13px; background: rgba(255,255,255,0.14); color: #fff; }
 .desk-top button.add { background: var(--accent); }
 .desk-top button:disabled { opacity: 0.6; cursor: default; }
@@ -266,7 +267,7 @@ let products = [];        // [{ key, name, lookup, account:'produce'|'meat', exc
 let productsLoaded = false;
 let prices = null;        // { checkedAt, products:{ key: entry }, running? }
 let qty = {};             // { productKey: n, 'productKey::itemNo': n }
-let view = 'order';       // 'order' | 'setup' | 'sent'
+let view = location.hash === '#setup' ? 'setup' : 'order';   // 'order' | 'setup' | 'sent' (the alert email links to #setup)
 let sentOrder = null;
 let openFamilies = {};
 let showAllFor = {};
@@ -392,7 +393,11 @@ function loadPrices() {
   db.ref('prices').on('value', snap => {
     const remote = snap.val();
     if (!remote) return;
+    const strip = x => JSON.stringify({ ...(x || {}), running: null });
+    const progressOnly = prices && strip(prices) === strip(remote);
+    if (remote.running) checkRequestedAt = 0;   // the check has started
     prices = remote;
+    if (progressOnly) { updateCheckBar(); return; }   // just the "34 of 118" count changed
     writeLocal(KEY_PRICES, prices);
     if (!editing()) render();
   }, err => console.warn('Price read failed:', err));
@@ -911,13 +916,12 @@ function renderSetup() {
   main.innerHTML = '';
   renderBar();
 
-  const running = prices && prices.running && (Date.now() - new Date(prices.running.startedAt)) < 20 * 60e3;
   const top = document.createElement('div');
   top.className = 'desk-top';
   top.innerHTML = `<div class="count">Products · ${products.length} items</div>
     <span class="saved" id="saved"></span>
-    <span class="chk">${running ? '⟳ Checking Four Seasons…' : prices && prices.checkedAt ? 'Last checked ' + esc(whenText(prices.checkedAt)) : 'Not checked yet'}</span>
-    <button id="check-btn"${running ? ' disabled' : ''}>Check Four Seasons now</button>
+    <span class="chk" id="chk"></span>
+    <button id="check-btn"></button>
     <button class="add" id="add-btn">+ Add product</button>`;
   main.appendChild(top);
 
@@ -956,6 +960,7 @@ function renderSetup() {
     if (first) { first.scrollIntoView({ block: 'center' }); first.focus(); }
   };
   $('check-btn').onclick = checkNow;
+  updateCheckBar();
   $('backup-btn').onclick = downloadBackup;
   $('restore-btn').onclick = restoreBackup;
   if (keep != null) window.scrollTo(0, keep);
@@ -1102,22 +1107,57 @@ function dragRow(tr) {
 }
 
 /** Ask the cloud to check rows that changed since the last check (or every row if none did). */
+// ── Check Four Seasons now: what the bar in Setup says ──
+const SECS_PER_ROW = 2.6, STARTUP_SECS = 75;
+let checkRequestedAt = 0;
+const changedKeys = () => products.filter(p => p.lookup && !entryFor(p)).map(p => p.key);
+const aboutMin = secs => `about ${Math.max(1, Math.round(secs / 60))} min`;
+
+function checkState() {
+  const now = Date.now();
+  const r = prices && prices.running;
+  if (r && r.startedAt) {
+    const last = new Date(r.at || r.startedAt).getTime();
+    if (now - last > 10 * 60e3 || now - new Date(r.startedAt) > 30 * 60e3) return { busy: false, text: '⚠ The last check didn\'t finish. Try again.', warn: true };
+    if (!r.total) return { busy: true, text: '⟳ Signing in to Four Seasons…' };
+    const left = Math.max(1, Math.ceil((r.total - (r.done || 0)) * SECS_PER_ROW / 60));
+    return { busy: true, text: `⟳ Checking Four Seasons… ${r.done || 0} of ${r.total} · about ${left} min left` };
+  }
+  if (checkRequestedAt && now - checkRequestedAt < 5 * 60e3) return { busy: true, text: '⟳ Starting the check…' };
+  if (checkRequestedAt) return { busy: false, text: '⚠ The check didn\'t start. Try again.', warn: true };
+  return { busy: false, text: prices && prices.checkedAt ? 'Last checked ' + whenText(prices.checkedAt) : 'Not checked yet' };
+}
+
+function updateCheckBar() {
+  const chk = $('chk'), btn = $('check-btn');
+  if (!chk || !btn) return;
+  const st = checkState();
+  chk.textContent = st.text;
+  chk.classList.toggle('warn', !!st.warn);
+  const n = changedKeys().length;
+  btn.disabled = st.busy;
+  btn.textContent = st.busy ? 'Checking…'
+    : n ? `Check ${plural(n, 'changed row')} (${aboutMin(STARTUP_SECS + n * SECS_PER_ROW)})`
+    : `Refresh all prices (${aboutMin(STARTUP_SECS + products.filter(p => p.lookup).length * SECS_PER_ROW)})`;
+}
+setInterval(() => { if (view === 'setup') updateCheckBar(); }, 15000);
+
 async function checkNow() {
   const btn = $('check-btn');
   btn.disabled = true;
   btn.textContent = 'Starting…';
-  const keys = products.filter(p => p.lookup && !entryFor(p)).map(p => p.key);
+  const keys = changedKeys();
   try {
     const res = await fetch('/.netlify/functions/check-now', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys })
     });
     if (res.status === 404) throw new Error('not-set-up');
     if (!res.ok) throw new Error('failed');
-    toast(keys.length ? `Checking ${plural(keys.length, 'new or changed row')}. Results show here in a few minutes.` : 'Checking every row. Results show here in a few minutes.');
-    btn.textContent = '⟳ Checking…';
+    checkRequestedAt = Date.now();
+    if (prices && prices.running) delete prices.running;   // an old unfinished check shouldn't show as current
+    updateCheckBar();
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = 'Check Four Seasons now';
+    updateCheckBar();
     toast(e.message === 'not-set-up' ? 'Check now needs a one-time setup. Until then, rows update at the 6 AM check.' : 'Couldn\'t start the check. Try again in a minute.');
   }
 }
