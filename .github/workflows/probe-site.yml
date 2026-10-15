@@ -1,0 +1,10 @@
+name: Probe live site
+on: { push: { branches: [probe-site] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in https://picksheet.netlify.app/ https://picksheet.netlify.app/sw.js; do echo "== $u"; curl -s -o /tmp/o -w "%{http_code}\n" "$u"; grep -o "order-pwa-v[0-9]*\|<title>[^<]*" /tmp/o | head -2; done
+          curl -s -o /dev/null -w "price-report fn: %{http_code}\n" -X POST https://picksheet.netlify.app/.netlify/functions/price-report -d '{}'
+          curl -s -o /dev/null -w "check-now fn GET: %{http_code}\n" https://picksheet.netlify.app/.netlify/functions/check-now
