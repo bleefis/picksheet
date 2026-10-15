@@ -116,6 +116,9 @@ async function main() {
     log('Dry run: not saving.');
   } else {
     // Save replacements into the product table, row by row, only if the row is unchanged since we read it.
+    // Remember which account each row was checked under, so the app knows to re-check it after a switch.
+    const acct = Object.fromEntries(todo.map(p => [p.key, p.account === 'meat' ? 'meat' : 'produce']));
+    for (const [k, v] of Object.entries(entries)) v.account = acct[k];
     const at = new Date().toISOString();
     for (const s of swaps) {
       const ref = db.ref(`products/items/${s.index}`);
