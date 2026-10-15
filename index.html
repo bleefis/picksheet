@@ -26,10 +26,11 @@
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<title>Weekly Order</title>
+<title>FS Weekly Order</title>
 <link rel="manifest" href="manifest.json"/>
 <link rel="icon" href="icon2-192.png"/>
 <link rel="apple-touch-icon" href="icon2-192.png"/>
+<meta name="apple-mobile-web-app-title" content="FS Order"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -232,7 +233,7 @@ input.cell.mono { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 
 <header class="hdr">
   <div class="hdr-text">
-    <div class="hdr-title" id="hdr-title">Weekly order</div>
+    <div class="hdr-title" id="hdr-title">FS Weekly Order</div>
     <div class="hdr-sub" id="hdr-sub"></div>
   </div>
   <button class="hdr-btn" id="hdr-btn"></button>
@@ -524,7 +525,7 @@ function renderHeader() {
     btn.textContent = 'Done';
     btn.onclick = () => go('order');
   } else {
-    $('hdr-title').textContent = 'Weekly order';
+    $('hdr-title').textContent = 'FS Weekly Order';
     const shown = products.filter(p => !p.hidden).length;
     if (prices && prices.checkedAt) {
       const old = (Date.now() - new Date(prices.checkedAt)) / 36e5 > STALE_HOURS;
