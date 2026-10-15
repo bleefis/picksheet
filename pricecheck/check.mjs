@@ -51,6 +51,7 @@ async function main() {
   const entries = {};
   const swaps = [];       // automatic replacements to save into the product table
   const problems = [];
+  let done = 0;
 
   try {
     await signIn(page);
@@ -59,6 +60,8 @@ async function main() {
       if (!mine.length) continue;
       await switchAccount(page, ACCOUNTS[account]);
       for (const p of mine) {
+        // Progress for the phone ("34 of 118"); not waited on, so it never slows the check.
+        if (!DRY_RUN) db.ref('prices/running').update({ done: done++, total: todo.length, at: new Date().toISOString() }).catch(() => {});
         const lookup = String(p.lookup).trim();
         try {
           if (isItemNo(lookup)) {

@@ -1,0 +1,42 @@
+# Emails a warning when the morning price check hasn't refreshed the prices
+# by 10 AM Virginia time. Tries every half hour until noon in case GitHub
+# starts it late; sends at most once a day.
+name: Late prices alert
+
+on:
+  schedule:
+    - cron: "0,30 14-17 * * *"   # UTC; the step below waits for 10 AM in Virginia
+  workflow_dispatch:
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: pricecheck
+    steps:
+      - name: 10 AM or later
+        id: gate
+        working-directory: .
+        run: |
+          hour=$((10#$(TZ=America/New_York date +%H)))
+          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$hour" -lt 10 ] || [ "$hour" -gt 13 ]; }; then
+            echo "Not 10 AM-1 PM in Virginia ($hour), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          node-version: 22
+      - name: Install
+        if: steps.gate.outputs.skip != 'true'
+        run: npm install --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - name: Check and alert
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+        run: node alert.mjs
