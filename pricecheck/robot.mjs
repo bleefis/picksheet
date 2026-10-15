@@ -150,8 +150,20 @@ async function importAndAdd(page, csv, acct, expected) {
     throw new Error('The import page had no "Add All to Cart" button. The CSV may not have been accepted.');
   }
   await addAll.first().click();
+  // The portal adds the lines one at a time ("Adding... 12 of 37") and stops if we leave
+  // the page, so wait until it has finished (about a second a line, plus slack).
+  const limit = Date.now() + (30 + (imported || expected) * 4) * 1000;
+  let last = '';
+  for (;;) {
+    await page.waitForTimeout(1500);
+    const now = clean(await page.locator('body').innerText().catch(() => ''));
+    const m = now.match(/Adding\.{0,3}\s*(\d+)\s*of\s*(\d+)/i);
+    if (!m) break;
+    if (m[0] !== last) { log(`  ${m[0]}`); last = m[0]; }
+    if (Date.now() > limit) { log('Still adding after the time limit; reading the cart anyway'); break; }
+  }
   await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(2000);
   log(`After Add All: ${clean(await page.locator('body').innerText().catch(() => '')).slice(0, 800)}`);
   return { obsolete };
 }
@@ -207,9 +219,14 @@ async function main() {
         const had = new Map(before.items.map(i => [i.code, i]));
         const overlaps = lines.filter(l => had.has(String(l.id)))
           .map(l => `${l.name} #${l.id}: ${had.get(String(l.id)).qty || 'some'} already in cart + ${l.q} ordered`);
+        const want = Math.max(0, lines.length - obsolete.length);
+        const newLines = lines.filter(l => !had.has(String(l.id))).length;   // lines already in the cart don't add a new row
+        const grew = before.head && after.head ? after.head.count - before.head.count : null;
+        const short = grew != null && grew < Math.min(want, newLines);
         const result = {
-          state: 'done',
-          added: Math.max(0, lines.length - obsolete.length),
+          state: short ? 'partial' : 'done',
+          added: grew != null ? Math.min(want, grew + (lines.length - newLines)) : want,
+          expected: want,
           obsolete,
           overlaps,
           alreadyCount: before.items.length,
@@ -219,7 +236,8 @@ async function main() {
           cartTotal: after.head ? after.head.total : ''
         };
         await set(acct, result);
-        log(`${LABEL[acct]}: done`, JSON.stringify(result));
+        if (short) failed = true;
+        log(`${LABEL[acct]}: ${result.state}`, JSON.stringify(result));
       } catch (e) {
         failed = true;
         log(`${LABEL[acct]}: FAILED ${e.message}`);
