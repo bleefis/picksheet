@@ -35,6 +35,29 @@ Required files in the repo root: `index.html`, `sw.js`, `manifest.json`,
 
 ---
 
+## Turn on the shared item list (one time, about 10 minutes)
+
+The item list is saved in a free Google Firebase database so every phone
+sees the same list. Until this is done, each phone keeps its own list.
+
+1. Go to [console.firebase.google.com](https://console.firebase.google.com),
+   sign in with the store's Google account, click **Create a project**, and
+   name it `picksheet`. Google Analytics can be turned off.
+2. In the left menu open **Build → Realtime Database → Create Database**.
+   Pick the United States location and **Start in locked mode**.
+3. Open the **Rules** tab, replace everything with the contents of
+   `database.rules.json` from this repo, and click **Publish**.
+4. Click the gear → **Project settings** → **Your apps** → the web icon
+   (`</>`). Name it `picksheet` and click **Register app**.
+5. Copy the `firebaseConfig` block it shows and send it to Claude (or paste
+   it over `FIREBASE_CONFIG` in `index.html`). These values are meant to be
+   public, so they are safe to put in the app.
+
+The first phone that opens the updated app uploads its list. After that,
+saving in ⚙ settings on any phone updates every phone.
+
+---
+
 ## Everyday workflow (automatic)
 
 ```

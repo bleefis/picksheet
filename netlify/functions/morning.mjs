@@ -9,7 +9,7 @@ import { sendMail } from '../lib/mail.mjs';
 
 const DATABASE_URL = 'https://picksheet-8b2a0-default-rtdb.firebaseio.com';
 const ORDER_EMAIL = 'highlandrootsmkt@gmail.com';
-const SITE = 'https://deploy-preview-1--picksheet.netlify.app';   // the app's Setup page; switch when the new app goes live
+const SITE = process.env.URL || 'https://picksheet.netlify.app';   // the live app (Netlify fills in URL)
 const REPO = 'https://api.github.com/repos/bleefis/picksheet/actions/workflows/price-check.yml';
 
 export const config = { schedule: '0,30 * * * *' };

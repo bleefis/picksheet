@@ -9,7 +9,7 @@ import { saveSnapshot } from './history.mjs';
 import { buildReport } from './report-data.mjs';
 
 const env = process.env;
-const SITE = env.REPORT_SITE || 'https://deploy-preview-1--picksheet.netlify.app';
+const SITE = env.REPORT_SITE || 'https://picksheet.netlify.app';
 
 async function main() {
   const db = initFirebase();
