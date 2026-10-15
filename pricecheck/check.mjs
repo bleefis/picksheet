@@ -102,7 +102,8 @@ async function main() {
     }
   } catch (e) {
     await shot(page, 'failed');
-    if (!DRY_RUN) await db.ref('prices/running').remove().catch(() => {});
+    // Tell the app the check failed, so the Setup page can say so.
+    if (!DRY_RUN) await db.ref('prices').update({ running: null, failed: { at: new Date().toISOString(), noResponse: /timeout|net::|chrome-error/i.test(e.message) } }).catch(() => {});
     throw e;
   } finally {
     await signOut(page).catch(e => log(`Sign out failed: ${e.message}`));
@@ -130,6 +131,7 @@ async function main() {
       const updates = {};
       for (const [k, v] of Object.entries(entries)) updates[`products/${k}`] = v;
       updates.running = null;
+      updates.failed = null;
       await db.ref('prices').update(updates);
     } else {
       const saved = { checkedAt: new Date().toISOString(), products: entries, problems };

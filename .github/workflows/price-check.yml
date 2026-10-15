@@ -5,13 +5,18 @@ name: Daily price check
 
 on:
   schedule:
-    # GitHub often starts scheduled runs late (sometimes hours), so try every
-    # half hour from 5 AM; the "Morning only" step runs the first one that
+    # The Netlify timer (netlify/functions/morning.mjs) starts the morning check
+    # on time. This GitHub timer is only a backup: it often starts runs hours
+    # late or skips them, so it tries every half hour from 5 AM; the "Morning only" step runs the first one that
     # gets through and skips the rest. Times are UTC (9:00 UTC = 5 AM in
     # Virginia in summer, 4 AM in winter).
     - cron: "0,30 9-13 * * *"
   workflow_dispatch:
     inputs:
+      morning:
+        description: "Morning check (started by the Netlify timer): skip if prices are already in, email the report on Mondays"
+        type: boolean
+        default: false
       only:
         description: "Check only these items (comma separated). Leave blank for all. Partial checks are never saved."
         required: false
@@ -58,7 +63,7 @@ jobs:
         run: |
           hour=$((10#$(TZ=America/New_York date +%H)))
           today=$(TZ=America/New_York date +%F)
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.morning }}" = "true" ]; then
             # Already checked today (or one is running)? Then this late start isn't needed.
             last=$(curl -s https://picksheet-8b2a0-default-rtdb.firebaseio.com/prices/checkedAt.json | tr -d '"')
             lastday=$( [ -n "$last" ] && [ "$last" != "null" ] && TZ=America/New_York date -d "$last" +%F || echo none)
@@ -105,7 +110,7 @@ jobs:
         if: >-
           steps.gate.outputs.skip != 'true' && (
             github.event.inputs.report == 'true' || github.event.inputs.report_only == 'true' ||
-            (github.event_name == 'schedule' && steps.gate.outputs.monday == 'true'))
+            ((github.event_name == 'schedule' || github.event.inputs.morning == 'true') && steps.gate.outputs.monday == 'true'))
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
         run: node report.mjs
