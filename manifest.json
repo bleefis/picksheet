@@ -1,6 +1,6 @@
 {
-  "name": "Four Seasons Order",
-  "short_name": "Order",
+  "name": "FS Weekly Order",
+  "short_name": "FS Order",
   "description": "Weekly produce & dairy order sheet",
   "start_url": "/",
   "display": "standalone",
