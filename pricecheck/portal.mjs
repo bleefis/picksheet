@@ -73,15 +73,34 @@ export async function signIn(page) {
   log('Signed in');
 }
 
-/** Sign out so the next run (or andrew) isn't blocked by an open session. */
+/** Sign out so the next run (or andrew) isn't blocked by an open session.
+ *  Going to /logout alone left the session open (andrew then saw "You are
+ *  already logged in"), so click the portal's own Sign Out first, then check
+ *  that a signed-in page really sends us back to the login form. */
 export async function signOut(page) {
-  const links = await page.evaluate(() => [...document.querySelectorAll('a[href]')]
-    .filter(a => /log.?out|sign.?out|log.?off/i.test(a.href + ' ' + a.textContent))
-    .map(a => a.href)).catch(() => []);
-  log(`Sign out links: ${links.join(' | ') || 'none found'}`);
-  await page.goto(links[0] || `${PORTAL}/logout`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  const btn = page.locator('a, button, input[type=submit], span, li')
+    .filter({ hasText: /^\s*(sign|log) ?(out|off)\s*$/i }).first();
+  if (await btn.count().catch(() => 0)) {
+    log(`Sign out control: ${(await btn.evaluate(el => el.outerHTML).catch(() => '?')).slice(0, 300)}`);
+    await Promise.all([
+      page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {}),
+      btn.click({ timeout: 10000 }).catch(e => log(`Sign out click failed: ${e.message}`))
+    ]);
+    await page.waitForTimeout(3000);
+  } else {
+    log('Sign out control: none found');
+  }
+  const signedOut = async () => {
+    await page.goto(`${PORTAL}/secure/account/dashboard`, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    return /login/i.test(new URL(page.url()).pathname);
+  };
+  if (await signedOut()) { log(`Signed out (checked: dashboard now goes to ${new URL(page.url()).pathname})`); return; }
+  log(`Still signed in after the click (at ${new URL(page.url()).pathname}); trying ${PORTAL}/logout`);
+  await page.goto(`${PORTAL}/logout`, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-  log(`Signed out (now at ${new URL(page.url()).pathname})`);
+  if (await signedOut()) { log('Signed out (via /logout)'); return; }
+  await shot(page, 'sign-out-failed');
+  log('WARNING: could not confirm the sign out; the next sign-in may say "already logged in"');
 }
 
 /** The "You are working on behalf of" box text, used to confirm the account. */
