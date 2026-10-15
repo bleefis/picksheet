@@ -1,4 +1,4 @@
-const CACHE = 'order-pwa-v14';
+const CACHE = 'order-pwa-v15';
 self.addEventListener('install', e => {
   // Relative paths so it works at any base URL (GitHub Pages subpaths, etc.)
   const cacheName = CACHE;

@@ -81,6 +81,10 @@ main.wide { max-width: none; padding: 0 0 40px; }
 .note.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .note.info { background: var(--accent-soft); color: var(--accent-dk); display: flex; align-items: center; gap: 8px; }
 .note.info button { margin-left: auto; font-weight: 700; text-decoration: underline; color: var(--accent-dk); }
+.note.reload { background: var(--card); border: 2px solid var(--accent); display: flex; align-items: center; gap: 10px; color: var(--ink); }
+.note.reload .sm { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.note.reload button { margin-left: auto; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 14px; font-weight: 800; font-size: 14px; white-space: nowrap; }
+.left-out { margin: 10px 0 0; }
 .list { background: var(--card); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; }
 .row { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 14px; min-height: 54px; border-bottom: 1px solid var(--line); }
 .row:last-child { border-bottom: 0; }
@@ -276,6 +280,7 @@ let view = location.hash === '#setup' ? 'setup' : 'order';   // 'order' | 'setup
 let sentOrder = null;
 let openFamilies = {};
 let showAllFor = {};
+let lastOrder = null;     // { id, data } the last order this phone sent, for "Reload it"
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -563,6 +568,7 @@ function renderOrder() {
     n.querySelector('button').onclick = () => openSent(last.id);
     main.appendChild(n);
   }
+  addReloadCard(main, last);
   if (prices && prices.checkedAt && (Date.now() - new Date(prices.checkedAt)) / 36e5 > STALE_HOURS) {
     const n = document.createElement('div');
     n.className = 'note warn';
@@ -585,6 +591,72 @@ function renderOrder() {
   }
   if (keep != null) window.scrollTo(0, keep);
   renderBar();
+}
+
+// ============================================================
+//  RELOAD LAST ORDER — refill quantities from the last order this phone sent
+// ============================================================
+function lastOrderLines(o) {
+  return [].concat((o.produce || []).map(l => ({ ...l, account: 'produce' })), (o.meat || []).map(l => ({ ...l, account: 'meat' })));
+}
+
+function addReloadCard(main, last) {
+  if (!last || !last.id || orderLines().length) return;
+  if (!lastOrder || lastOrder.id !== last.id) {
+    if (db && !(lastOrder && lastOrder.loading === last.id)) {
+      lastOrder = { loading: last.id };
+      db.ref('orders/' + last.id).once('value').then(snap => {
+        lastOrder = { id: last.id, data: snap.val() };
+        if (view === 'order') renderOrder();
+      }).catch(() => { lastOrder = null; });
+    }
+    return;
+  }
+  const lines = lastOrder.data ? lastOrderLines(lastOrder.data) : [];
+  if (!lines.length) return;
+  const when = whenText(lastOrder.data.createdAt || last.at);
+  const n = document.createElement('div');
+  n.className = 'note reload';
+  n.innerHTML = `<div><b>Start from your last order?</b><div class="sm">${esc(when[0].toUpperCase() + when.slice(1))} · ${plural(lines.length, 'item')}</div></div><button>Reload it</button>`;
+  n.querySelector('button').onclick = () => askReload(lines, when);
+  main.appendChild(n);
+}
+
+/** Match each line of the last order to a row on this week's list. */
+function matchLines(lines) {
+  const found = {}, missing = [];
+  lines.forEach(l => {
+    const id = String(l.id).trim();
+    let qk = null;
+    for (const p of products) {
+      if (p.hidden || (p.account === 'meat' ? 'meat' : 'produce') !== l.account) continue;
+      const st = stateOf(p);
+      if (st.kind === 'item' && p.lookup.trim() === id) { qk = p.key; break; }
+      if (st.kind === 'options' && st.entry.options.some(o => String(o.code) === id)) { qk = p.key + VAR_SEP + id; break; }
+    }
+    if (qk) found[qk] = (found[qk] || 0) + (Number(l.q) || 0);
+    else missing.push(l);
+  });
+  return { found, missing };
+}
+
+function askReload(lines, when) {
+  const { found, missing } = matchLines(lines);
+  const count = lines.length - missing.length;
+  const left = missing.length
+    ? `<div class="note warn left-out">${plural(missing.length, 'item')} ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} on this week's list, so ${missing.length === 1 ? 'it\'ll' : 'they\'ll'} be left out:${missing.map(l => `<br>• ${esc(l.name || '')} (#${esc(l.id)})`).join('')}</div>`
+    : '';
+  const sheet = openSheet(`
+    <h2>Reload last order?</h2>
+    <div class="lead">${plural(lines.length, 'item')} from ${esc(when)} go back into the picksheet. You can change anything before you send.</div>
+    ${left}
+    <div class="acts">${count ? `<button class="btn block" id="yes-btn">Reload ${plural(count, 'item')}</button>` : ''}<button class="btn ghost block" id="no-btn">Cancel</button></div>`);
+  sheet.querySelector('#no-btn').onclick = closeSheet;
+  const yes = sheet.querySelector('#yes-btn');
+  if (yes) yes.onclick = () => {
+    qty = found; saveQty(); closeSheet(); renderOrder();
+    toast(`Reloaded ${plural(count, 'item')}${missing.length ? ` · ${missing.length} left out` : ''}`);
+  };
 }
 
 function nameEl(p, text) {
