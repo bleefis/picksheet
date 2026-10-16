@@ -52,6 +52,11 @@ async function main() {
   const swaps = [];       // automatic replacements to save into the product table
   const problems = [];
   let done = 0;
+  // A result that found nothing. When most of an account comes back like this,
+  // Four Seasons wasn't showing that account's catalog (seen at 5 AM on Oct 16:
+  // every Produce search was empty while Meat & Dairy was fine).
+  const blank = e => !!e && (e.status === 'not-found' || (Array.isArray(e.options) && !e.found));
+  const failedAccounts = [];
 
   try {
     await signIn(page);
@@ -59,7 +64,7 @@ async function main() {
       const mine = todo.filter(p => (p.account === 'meat' ? 'meat' : 'produce') === account);
       if (!mine.length) continue;
       await switchAccount(page, ACCOUNTS[account]);
-      for (const p of mine) {
+      const checkAll = async () => { for (const p of mine) {
         // Progress for the phone ("34 of 118"); not waited on, so it never slows the check.
         if (!DRY_RUN) db.ref('prices/running').update({ done: done++, total: todo.length, at: new Date().toISOString() }).catch(() => {});
         const lookup = String(p.lookup).trim();
@@ -98,6 +103,25 @@ async function main() {
           log(`${p.name || lookup}: ERROR ${e.message.slice(0, 200)}`);
           await shot(page, `error-${p.key}`);
         }
+      } };
+      await checkAll();
+      const emptyCount = () => mine.filter(p => blank(entries[p.key])).length;
+      const empty = () => mine.length >= 5 && emptyCount() / mine.length >= 0.6;
+      if (empty()) {
+        log(`${account}: ${emptyCount()} of ${mine.length} came back empty; signing in again and retrying once`);
+        await signOut(page).catch(() => {});
+        await signIn(page);
+        await switchAccount(page, ACCOUNTS[account], true);
+        done = Math.max(0, done - mine.length);
+        for (let i = swaps.length - 1; i >= 0; i--) if (mine.some(p => p.key === swaps[i].key)) swaps.splice(i, 1);
+        await checkAll();
+      }
+      if (empty()) {
+        log(`${account}: still ${emptyCount()} of ${mine.length} empty; keeping the last good prices for these rows`);
+        failedAccounts.push(account);
+        for (const p of mine) delete entries[p.key];
+        for (let i = swaps.length - 1; i >= 0; i--) if (mine.some(p => p.key === swaps[i].key)) swaps.splice(i, 1);
+        problems.push(`${account === 'meat' ? 'Meat & Dairy' : 'Produce'} prices came back empty from Four Seasons`);
       }
     }
   } catch (e) {
@@ -127,12 +151,20 @@ async function main() {
       if (!now || now.key !== s.key || String(now.lookup).trim() !== s.from) { log(`Row ${s.key} changed meanwhile; not replacing`); delete entries[s.key]; continue; }
       await ref.update({ lookup: s.to, replaced: { from: s.from, at } });
     }
+    const failed = failedAccounts.length ? { at: new Date(Date.now() + 1000).toISOString(), noResponse: false, accounts: failedAccounts } : null;
     if (partial) {
       const updates = {};
       for (const [k, v] of Object.entries(entries)) updates[`products/${k}`] = v;
       updates.running = null;
-      updates.failed = null;
+      updates.failed = failed;
       await db.ref('prices').update(updates);
+    } else if (failed) {
+      // Keep the last good prices for the empty account and leave checkedAt alone,
+      // so the morning timer tries again in half an hour and the app says so.
+      const old = (await db.ref('prices').get()).val() || {};
+      const keep = Object.fromEntries(Object.entries(old.products || {}).filter(([k]) => !(k in entries)));
+      await db.ref('prices').set({ checkedAt: old.checkedAt || null, products: { ...keep, ...entries }, problems, failed });
+      log(`Saved what came back; kept ${Object.keys(keep).length} earlier prices for ${failedAccounts.join(', ')}`);
     } else {
       const saved = { checkedAt: new Date().toISOString(), products: entries, problems };
       await db.ref('prices').set(saved);
@@ -143,6 +175,7 @@ async function main() {
   }
   await deleteApp(getApp());
   if (counted === 0 && todo.length) throw new Error('Nothing was checked.');
+  if (failedAccounts.length) throw new Error(`${failedAccounts.join(', ')} came back empty from Four Seasons; kept the earlier prices.`);
 }
 
 // ── Old three-page list → product table (same rules as the app) ──
