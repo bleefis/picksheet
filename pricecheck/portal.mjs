@@ -112,11 +112,11 @@ export async function currentAccountText(page) {
 }
 
 /** Switch to a customer number using the Ship To list. */
-export async function switchAccount(page, number) {
+export async function switchAccount(page, number, force = false) {
   const listUrl = `${PORTAL}/secure/account/sales-person`;
   await page.goto(listUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-  if (isOn(await currentAccountText(page), number)) { log(`Already on ${number}`); return; }
+  if (!force && isOn(await currentAccountText(page), number)) { log(`Already on ${number}`); return; }
 
   // Each row in the Ship To table opens a "Change Ship To" box when clicked.
   const row = page.locator('tr', { has: page.locator(`td:text-is("${number}")`) }).first();
