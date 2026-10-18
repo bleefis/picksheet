@@ -1,6 +1,7 @@
 // Netlify timer, every half hour. GitHub's own timer often starts hours late
 // or not at all, so this kicks off the work on time:
-//  - 5:00–9:30 AM Virginia time: if today's prices aren't in yet and no check
+//  - 6:30–9:30 AM Virginia time (Four Seasons hides Produce until about
+//    6:30, seen Oct 16 and 17): if today's prices aren't in yet and no check
 //    is running or just started, start the price check (it retries every half
 //    hour, so a short Four Seasons outage doesn't cost the whole morning).
 //  - 10:00 AM: if prices still aren't in, email a warning (once, since this
@@ -25,12 +26,15 @@ const github = (path, init = {}) => fetch(REPO + path, {
   headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'picksheet', ...(init.headers || {}) }
 });
 
+// 6:30 to 9:30 AM Virginia time.
+const inWindow = t => (t.hour > 6 || (t.hour === 6 && t.minute >= 30)) && t.hour <= 9;
+
 /** What to do at this moment: 'start', 'email' or a reason to do nothing. */
 export function decide({ now, prices, recentRuns }) {
   const t = va(now);
   const checkedToday = prices && prices.checkedAt && va(prices.checkedAt).date === t.date;
   if (checkedToday) return 'prices already in';
-  if (t.hour >= 5 && t.hour <= 9) {
+  if (inWindow(t)) {
     const r = prices && prices.running;
     if (r && r.startedAt && now - Date.parse(r.at || r.startedAt) < 10 * 60e3) return 'a check is running';
     if (recentRuns > 0) return 'a check started in the last 25 minutes';
@@ -47,7 +51,7 @@ export default async () => {
   const lite = { checkedAt, running, failed };
   let recentRuns = 0;
   const t = va(now);
-  if (t.hour >= 5 && t.hour <= 9) {
+  if (inWindow(t)) {
     const since = new Date(now - 25 * 60e3).toISOString();
     const res = await github(`/runs?created=>=${since}&per_page=10`);
     recentRuns = res.ok ? (await res.json()).total_count : 0;
@@ -68,7 +72,7 @@ export default async () => {
         <p>${failedToday && failed.noResponse ? 'The Four Seasons website didn\'t respond this morning. ' : ''}The picksheet is still showing prices from <b>${checkedAt ? when(checkedAt) : 'an earlier check'}</b>, so some prices or items may be out of date.</p>
         <p>To refresh them, open Setup and tap <b>Refresh all prices</b>. It takes about 7 minutes.</p>
         <p style="margin:20px 0"><a href="${SITE}/#setup" style="background:#0f3d2e;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:700">Open Setup</a></p>
-        <p style="font-size:12px;color:#5d6a63">The check tries every half hour from 5 to 9:30 AM. This email is sent at most once a day.</p></div>`
+        <p style="font-size:12px;color:#5d6a63">The check tries every half hour from 6:30 to 9:30 AM. This email is sent at most once a day.</p></div>`
     });
     console.log('Warning email sent');
   }
