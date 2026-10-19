@@ -34,7 +34,7 @@ concurrency:
 jobs:
   load:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 75   # the robot may wait up to 30 min (twice) for Four Seasons to answer
     defaults:
       run:
         working-directory: pricecheck

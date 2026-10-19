@@ -191,6 +191,7 @@ async function main() {
   if (order.robot && order.robot.state === 'done' && !DRY_RUN) { log('Already loaded; not loading twice.'); return; }
   const set = (p, v) => DRY_RUN ? Promise.resolve(log(`(dry run) robot/${p} =`, JSON.stringify(v))) : ref.child('robot/' + p).set(v);
   await set('state', 'running');
+  await set('error', null);   // clear a problem left by an earlier try of this order
   await set('startedAt', new Date().toISOString());
 
   const browser = await chromium.launch();
@@ -198,7 +199,7 @@ async function main() {
   let failed = false;
   let imported = false;
   try {
-    await signIn(page);
+    await patientSignIn(page);
     const columns = await templateColumns(page);
     for (const acct of ['produce', 'meat']) {
       const lines = order[acct] || [];
@@ -209,7 +210,7 @@ async function main() {
           // Signing out and back in is what empties the import table.
           await signOut(page);
           await page.context().clearCookies();
-          await signIn(page);
+          await patientSignIn(page);
         }
         imported = true;
         await switchAccount(page, ACCOUNTS[acct]);
@@ -261,6 +262,24 @@ async function main() {
       log(`Summary email: ${res.status}`);
     }
     await deleteApp(getApp());
+  }
+}
+
+// Four Seasons' website sometimes doesn't answer at all for a while (Oct 19:
+// the robot gave up after 4 minutes). When it doesn't answer, wait 5 minutes and
+// try again, for up to 30 minutes, before giving up.
+const WAIT_MIN = 30, EVERY_MIN = 5;
+async function patientSignIn(page) {
+  const until = Date.now() + WAIT_MIN * 60e3;
+  for (;;) {
+    try { return await signIn(page); }
+    catch (e) {
+      const noAnswer = /page\.goto|net::ERR/i.test(e.message) || /^(about:blank|chrome-error:)/.test(page.url());
+      if (!noAnswer) throw e;
+      if (Date.now() + EVERY_MIN * 60e3 > until) throw new Error(`Four Seasons' website didn't answer for ${WAIT_MIN} minutes`);
+      log(`Four Seasons isn't answering; trying again in ${EVERY_MIN} minutes`);
+      await page.waitForTimeout(EVERY_MIN * 60e3);
+    }
   }
 }
 
