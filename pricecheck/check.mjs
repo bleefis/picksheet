@@ -53,7 +53,7 @@ async function main() {
   const problems = [];
   let done = 0;
   // A result that found nothing. When most of an account comes back like this,
-  // Four Seasons wasn't showing that account's catalog (seen at 5 AM on Oct 16:
+  // Four Seasons wasn't showing that account's catalog (seen at 5 AM on Oct 16 and 17:
   // every Produce search was empty while Meat & Dairy was fine).
   const blank = e => !!e && (e.status === 'not-found' || (Array.isArray(e.options) && !e.found));
   const failedAccounts = [];
@@ -109,12 +109,19 @@ async function main() {
       const empty = () => mine.length >= 5 && emptyCount() / mine.length >= 0.6;
       if (empty()) {
         log(`${account}: ${emptyCount()} of ${mine.length} came back empty; signing in again and retrying once`);
-        await signOut(page).catch(() => {});
-        await signIn(page);
-        await switchAccount(page, ACCOUNTS[account], true);
-        done = Math.max(0, done - mine.length);
-        for (let i = swaps.length - 1; i >= 0; i--) if (mine.some(p => p.key === swaps[i].key)) swaps.splice(i, 1);
-        await checkAll();
+        // If the retry itself fails (on Oct 17 the Produce account wasn't even listed),
+        // mark this account as failed below and still go on to the other one.
+        try {
+          await signOut(page).catch(() => {});
+          await signIn(page);
+          await switchAccount(page, ACCOUNTS[account], true);
+          done = Math.max(0, done - mine.length);
+          for (let i = swaps.length - 1; i >= 0; i--) if (mine.some(p => p.key === swaps[i].key)) swaps.splice(i, 1);
+          await checkAll();
+        } catch (e) {
+          log(`${account}: retry failed: ${e.message.split('\n')[0].slice(0, 200)}`);
+          await shot(page, `retry-${account}`);
+        }
       }
       if (empty()) {
         log(`${account}: still ${emptyCount()} of ${mine.length} empty; keeping the last good prices for these rows`);

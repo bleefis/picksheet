@@ -1,5 +1,5 @@
 # Daily Four Seasons price check for the picksheet app.
-# Runs each morning (first try after 5 AM Virginia time) and saves this week's options and prices to
+# Runs each morning (first try at 6:30 AM Virginia time) and saves this week's options and prices to
 # Firebase (/prices). Can also be run by hand from the Actions tab.
 name: Daily price check
 
@@ -7,10 +7,11 @@ on:
   schedule:
     # The Netlify timer (netlify/functions/morning.mjs) starts the morning check
     # on time. This GitHub timer is only a backup: it often starts runs hours
-    # late or skips them, so it tries every half hour from 5 AM; the "Morning only" step runs the first one that
-    # gets through and skips the rest. Times are UTC (9:00 UTC = 5 AM in
-    # Virginia in summer, 4 AM in winter).
-    - cron: "0,30 9-13 * * *"
+    # late or skips them, so it tries every half hour from 6:30 AM; the "Morning only" step runs the first one that
+    # gets through and skips the rest. Times are UTC (10:30 UTC = 6:30 AM in
+    # Virginia in summer, 5:30 AM in winter; the step below skips anything before 6:30).
+    - cron: "30 10 * * *"
+    - cron: "0,30 11-14 * * *"
   workflow_dispatch:
     inputs:
       morning:
@@ -67,8 +68,9 @@ jobs:
             # Already checked today (or one is running)? Then this late start isn't needed.
             last=$(curl -s https://picksheet-8b2a0-default-rtdb.firebaseio.com/prices/checkedAt.json | tr -d '"')
             lastday=$( [ -n "$last" ] && [ "$last" != "null" ] && TZ=America/New_York date -d "$last" +%F || echo none)
-            if [ "$hour" -lt 5 ] || [ "$hour" -gt 9 ]; then
-              echo "Outside 5-9 AM in Virginia ($hour), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+            minute=$((10#$(TZ=America/New_York date +%M)))
+            if [ $((hour * 60 + minute)) -lt 390 ] || [ "$hour" -gt 9 ]; then
+              echo "Outside 6:30-9:59 AM in Virginia ($hour), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
             elif [ "$lastday" = "$today" ]; then
               echo "Prices already checked today ($last), skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
             fi
