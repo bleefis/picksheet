@@ -46,12 +46,18 @@ function row(r, sub) {
 const table = (wasLabel, rows) => `<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;font-size:13px">
   <tr><td style="${HEAD}">Item</td><td align="right" style="${HEAD}">${wasLabel}</td><td align="right" style="${HEAD}">Today</td><td align="right" style="${HEAD}">Change</td></tr>${rows}</table>`;
 
+// Only rows that changed: a price went up or down, or the item can't be ordered now.
+const changed = x => !!x.change || x.now == null;
+const none = `<p style="color:${MUTED};font-size:13px;margin:0">No price changes.</p>`;
+
 export function reportHtml(r) {
   const sub = x => [ACCOUNTS[x.account].label, x.q ? `${x.q} case${x.q === 1 ? '' : 's'}` : '', unitText(x.desc, x.now) ? unitText(x.desc, x.now) + ' today' : '', x.replacedFrom ? `replaced #${x.replacedFrom}` : ''].filter(Boolean).map(esc).join(' · ');
   const ordered = r.order
-    ? (r.ordered.length ? table('Last week', r.ordered.map(x => row(x, sub(x))).join('')) : `<p style="color:${MUTED}">That order had no items.</p>`)
+    ? (!r.ordered.length ? `<p style="color:${MUTED}">That order had no items.</p>`
+      : r.ordered.some(changed) ? table('Last week', r.ordered.filter(changed).map(x => row(x, sub(x))).join('')) : none)
     : `<p style="color:${MUTED};font-size:13px;margin:0">No order was sent from the new picksheet in the last 10 days.</p>`;
-  const items = r.items.length ? table(r.baselineDate ? day(r.baselineDate).replace(/^\w+, /, '') : 'Before', r.items.map(x => row(x, sub(x))).join('')) : `<p style="color:${MUTED}">No products are set up by item #.</p>`;
+  const items = !r.items.length ? `<p style="color:${MUTED}">No products are set up by item #.</p>`
+    : r.items.some(changed) ? table(r.baselineDate ? day(r.baselineDate).replace(/^\w+, /, '') : 'Before', r.items.filter(changed).map(x => row(x, sub(x))).join('')) : none;
   const all = r.ordered.concat(r.items);
   const up = all.filter(x => x.change > 0).length, down = all.filter(x => x.change < 0).length, same = all.filter(x => x.change === 0).length;
   return `<div style="background:#f1f3f2;padding:20px 8px;font-family:Arial,Helvetica,sans-serif;color:#1f2a24">
@@ -62,10 +68,10 @@ export function reportHtml(r) {
   </div>
   <div style="padding:18px 22px">
     <div style="font-size:15px;font-weight:700;margin-bottom:2px">What you ordered last week</div>
-    <div style="font-size:12px;color:${MUTED};margin-bottom:8px">${r.order ? `The exact items from your order sent ${when(r.order.createdAt)}, priced again today` : ''}</div>
+    <div style="font-size:12px;color:${MUTED};margin-bottom:8px">${r.order ? `Items from your order sent ${when(r.order.createdAt)} whose price changed` : ''}</div>
     ${ordered}
     <div style="font-size:15px;font-weight:700;margin:24px 0 2px">All item # products</div>
-    <div style="font-size:12px;color:${MUTED};margin-bottom:8px">Every item set up by item # on the picksheet, changes first</div>
+    <div style="font-size:12px;color:${MUTED};margin-bottom:8px">Only items set up by item # whose price changed</div>
     ${items}
     <p style="font-size:11px;color:#8a958f;margin-top:18px">Prices are per case from Four Seasons${r.pricesAt ? `, checked ${new Date(r.pricesAt).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}.</p>
   </div></div></div>`;
