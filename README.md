@@ -1,230 +1,66 @@
-# 🛒 Four Seasons Order
+# FS Weekly Order
 
-A mobile-first Progressive Web App for weekly grocery ordering. Walk the aisles, tap to count cases, email the order. Built for Four Seasons grocery store.
+The weekly ordering app for **Highland Roots Market**. Walk the store with a phone, tap how many cases you want, and tap **Send**. The app emails the order and loads it into both Four Seasons carts for you.
 
-**Live Demo:** https://lucky-kashata-294072.netlify.app  
-**Platform:** Android (Chrome) · Desktop compatible  
-**Tech Stack:** Vanilla HTML/CSS/JS — no framework, no build step, no backend
+**App:** [picksheet.netlify.app](https://picksheet.netlify.app) · **Setup:** [picksheet.netlify.app/#setup](https://picksheet.netlify.app/#setup)
 
 ---
 
-## ✨ Features
+## What it does
 
-- **📱 Mobile-optimized** — designed for one-handed use while walking store aisles
-- **✅ Tap-to-count** — increment quantities with single taps, hold to reset
-- **📧 Email export** — order data sent via Gmail (CSV format, plain text)
-- **⚙️ Full config editor** — add/edit/reorder items, inline editing, drag handles
-- **💾 Backup/restore** — export config as JSON, import on new devices
-- **📴 Works offline** — service worker caches all files after first load
-- **🏠 Home screen install** — runs full-screen like a native app
-
----
-
-## 🚀 Quick Start
-
-### Deploy to Netlify (Free, auto-deploys on every push)
-
-1. **Push this repo to GitHub** (already at `bleefis/picksheet`)
-2. **Connect Netlify:** app.netlify.com → Add new site → Import from Git →
-   pick the repo. Build command: *(empty)*. Publish directory: `.`
-3. **Wait ~1 minute** — live at `https://<your-site-name>.netlify.app`
-4. **Install on Android:**
-   - Open the URL in Chrome
-   - Menu (⋮) → Add to Home screen
-
-Every push to `main` redeploys automatically; pull requests get preview URLs.
-Full deployment guide: [DEPLOY.md](DEPLOY.md)
-
----
-
-## 📖 How It Works
-
-### Weekly Workflow
-
-```
-1. Open app from home screen
-2. Page 1 → Seasonal Produce → tap circles to set quantities → Next
-3. Page 2 → Produce List → same → Next  
-4. Page 3 → Meat & Dairy → same → Email Order
-5. Gmail opens with CSV data in body
-6. Copy to .csv files and upload to distributor portal
-7. Quantities auto-reset to zero
-```
-
-### Interaction Model
-
-- **Tap** the quantity circle (right side) → +1
-- **Hold 1 second** on the circle → reset to 0 (vibration confirms)
-- **Tap anywhere else** → scrolls the list (no accidental taps)
-
-### Email Format
-
-Two CSV blocks in one Gmail draft:
-
-```
-=== SEASONAL + PRODUCE ===
-ItemID,Quantity,ItemName
-236006,3,Avocados
-8104,2,Bananas
-
-=== MEAT & DAIRY ===
-ItemID,Quantity,ItemName
-69174,1,Bacon Sunday
-```
-
-- Sent to: `highlandrootsmkt@gmail.com` (configurable)
-- Seasonal + Produce → uploaded together in portal
-- Meat & Dairy → uploaded separately in portal
-
----
-
-## ⚙️ Configuration
-
-Tap the **⚙ gear icon** (top-right) to edit items.
-
-| Action | How |
+| Part | What happens |
 |---|---|
-| Edit name or ID | Tap field and type |
-| Reorder | Drag the **≡** handle |
-| Add item | **+ Add item** button |
-| Delete item | Trash icon |
-| Save changes | **Save config** |
-| Backup config | **Backup config** → downloads JSON |
-| Restore backup | **Restore backup** → pick JSON file |
-
-**Item IDs** are distributor SKU codes. Seasonal items don't always have them
-(distributor assigns new IDs each season) — leave blank and fill in as needed.
+| **Order screen** | One list in the order you walk the store, with this week's Four Seasons prices. Products like *OG Apples* open to show every variety, cheapest first. |
+| **Send** | Emails the order (with the two CSV files) to highlandrootsmkt@gmail.com and starts the cart robot. |
+| **Cart robot** | Loads Produce (94273) and Meat & Dairy (94274) into the carts in about 2 minutes, then emails "Carts loaded" or "Cart problem". **It never submits.** You review and submit on Four Seasons. |
+| **Morning prices** | Every morning from 6:30 AM, prices are pulled from Four Seasons. If they still haven't come in by 10 AM, an email says so. |
+| **Monday email** | "Four Seasons Price Check" lists only the prices that changed since last week, so you can update register prices. |
+| **Setup** | The shared product list. Changes save by themselves and reach every phone. |
 
 ---
 
-## 💾 Data Storage
+## Weekly order
 
-All data lives in **browser localStorage** on the device — nothing is stored
-on GitHub or any server.
+1. Open **FS Order** from the home screen.
+2. Tap each circle to set cases (1 → 2 → 3 → 4 → back to empty). Hold a circle for about a second to clear it.
+3. Tap **Review & send**, check the list, then tap **Send order**.
+4. Watch the carts fill, or close the app. The emails arrive either way.
+5. Open the **Carts loaded** email, tap **Open Four Seasons to submit**, and submit Produce first, then switch to Meat & Dairy and submit.
 
-| Key | Contents |
+Want last week's order again? On an empty order screen, tap **Reload it**.
+
+Items customers ordered midweek can stay in the cart. The robot adds the weekly order alongside them, and the email points out any overlaps.
+
+---
+
+## Setup page
+
+| Column | What it's for |
 |---|---|
-| `order_items_v3` | Item names + IDs (persists across weeks) |
-| `order_qty_v2` | This week's quantities (reset after export) |
+| **Name on picksheet** | What your team sees |
+| **Look up by** | Search words (like *OG Apples*) to see every option each week, or an item # (digits only) for one fixed product |
+| **Found on Four Seasons** | What the last check found |
+| **Account** | Produce or Meat & Dairy |
+| **Leave out words** | Hides options you never want (e.g. *Fuji*) |
+| **On phone** | Turn off to hide a row without deleting it |
 
-⚠️ **localStorage is device-specific.** Clearing browser data or switching devices
-will erase your config. Use the **Backup Config** feature regularly.
+Drag **⠿** to move a row. After changing **Look up by**, an item #, or the account, tap **Check N changed rows** to get prices now (a few minutes). If Four Seasons replaced an item, the row shows the new one with **Confirm** and **Undo**.
 
----
-
-## 🏗️ Architecture
-
-### Single-File Design
-Entire app is `index.html` — CSS and JS are inlined for simplicity. No build step,
-no bundler, no npm dependencies. Just open the file in a browser and it works.
-
-### Why Vanilla JS?
-- Zero dependencies = zero supply-chain risk
-- Instant loading (53KB total)
-- Any developer can read the code top-to-bottom in 30 minutes
-- No framework churn — this works the same in 2030 as it does today
-
-### Touch-First Interaction
-- **Passive touch events** on the badge eliminate the 300ms tap delay without
-  blocking scroll on the row
-- **Pointer-based drag** (not HTML5 Drag API) — works reliably on Android Chrome
-- **Only the badge is tappable** — the rest of the row scrolls freely
-
-### PWA Features
-- `manifest.json` → home screen install, standalone display mode
-- `sw.js` → offline caching, cache-first strategy
-- Works fully offline after first load
+**Download a backup** / **Restore from a backup** sit at the bottom of the page.
 
 ---
 
-## 📂 Project Structure
+## When something goes wrong
 
-```
-four-seasons-order/
-├── index.html          # Entire app (HTML + CSS + JS)
-├── manifest.json       # PWA manifest
-├── sw.js              # Service worker
-├── icon-192.png       # Home screen icon (192×192)
-├── icon-512.png       # Home screen icon (512×512)
-├── README.md          # This file
-├── DEPLOY.md          # GitHub Pages deployment guide
-├── CHANGELOG.md       # Version history
-├── CONTRIBUTING.md    # How to contribute
-└── LICENSE            # MIT License
-```
+| You see | What to do |
+|---|---|
+| **Cart problem** email | Four Seasons' website wasn't answering (the robot tried for 30 minutes). Ask Claude to rerun it, or import the CSVs from the order email by hand. |
+| **Prices didn't refresh** email | Usually Four Seasons is slow in the morning. Tap the button to open Setup and try **Refresh all prices**. |
+| "You're already logged in" on Four Seasons | The robot was signed in. Wait a minute and try again. Only one sign-in per login works at a time. |
+| Phone shows an old version | Close the app fully and reopen it. |
 
 ---
 
-## 🔧 Development
+## For developers
 
-### Local Testing
-
-```bash
-# Clone the repo
-git clone https://github.com/YOUR_USERNAME/four-seasons-order.git
-cd four-seasons-order
-
-# Option 1: Open directly in browser
-open index.html
-
-# Option 2: Run local server (for PWA features)
-python3 -m http.server 8000
-# Then open: http://localhost:8000
-```
-
-### Testing on Android
-
-Push to GitHub, enable Pages, open the URL on your phone.  
-Or run a local server and access via `http://YOUR_IP:8000` from your phone.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full setup.
-
----
-
-## 🐛 Known Limitations
-
-- **No file attachments in email** — `mailto:` links can't attach files. The CSV
-  data is pasted as plain text instead. You copy it into `.csv` files at your desktop.
-- **localStorage is local** — not synced across devices. Use Backup/Restore to migrate.
-- **Single-user** — no multi-user accounts, no cloud sync, no collaboration features.
-  This is intentional — simplicity over features.
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-**Ideas for future versions:**
-- Export directly to CSV files (via File System Access API)
-- Barcode scanning for item lookup
-- Historical order tracking
-- Multiple store profiles
-
-Open an issue to discuss before starting major work.
-
----
-
-## 📜 License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-Built for **Four Seasons Grocery** in Monterey, Virginia.
-
-**Stack:**
-- No framework — vanilla HTML/CSS/JavaScript
-- Fonts: [DM Serif Display + DM Sans](https://fonts.google.com/specimen/DM+Sans) via Google Fonts
-- Icons: Hand-coded SVG (no icon library)
-- Hosting: GitHub Pages (free, fast, reliable)
-
----
-
-## 📞 Support
-
-- **Bug reports:** Open a GitHub issue
-- **Feature requests:** Open a GitHub discussion
-- **Questions:** Contact highlandrootsmkt@gmail.com
+How it's built, how to run the tests, and how the parts connect: see [CLAUDE.md](CLAUDE.md).

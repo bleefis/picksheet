@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Live site: https://picksheet.netlify.app (Setup page at `#setup`). Netlify auto-deploys `main` to production and gives each PR a preview URL. **Pushing to `main` changes what the store uses that week**, so ship changes through a PR the owner has approved.
 
-README.md, QUICK-REFERENCE.md, CONTRIBUTING.md and DEPLOY.md mostly describe the old single-file app (Gmail CSV paste, 3 pages). Trust the code over them.
+CONTRIBUTING.md and DEPLOY.md mostly describe the old single-file app (Gmail CSV paste, 3 pages). Trust the code over them.
 
 ## Commands
 
