@@ -38,7 +38,7 @@ export default async req => {
         <div style="font-size:18px;font-weight:700;margin-bottom:8px">${ok ? 'Both carts are loaded' : 'Something needs a look'}</div>
         ${block('produce')}${block('meat')}
         <p style="margin:18px 0 6px"><a href="https://customer.fsproduce.com/login" style="display:inline-block;background:#2347c4;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:8px">Open Four Seasons to submit</a></p>
-        <p style="font-size:12px;color:#5d6a63">Nothing was submitted. Sign in, check out the Produce cart, then switch to Meat &amp; Dairy (94274) and check out that one.</p></div>`
+        <p style="font-size:12px;color:#5d6a63">Nothing was submitted. Sign in, check out the Produce cart, then switch to Meat &amp; Dairy (94818) and check out that one.</p></div>`
     });
     return json({ sent: true });
   } catch (e) {

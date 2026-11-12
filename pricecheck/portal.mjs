@@ -8,7 +8,7 @@ import { parseRow } from './parse.mjs';
 
 export const PORTAL       = 'https://customer.fsproduce.com';
 export const DATABASE_URL = 'https://picksheet-8b2a0-default-rtdb.firebaseio.com';
-export const ACCOUNTS     = { produce: '94273', meat: '94274' };   // Produce / Meat & Dairy
+export const ACCOUNTS     = { produce: '94815', meat: '94818' };   // Produce / Meat & Dairy
 // The portal sometimes names the account without its number; Meat & Dairy ends in "M/D".
 const isOn = (text, number) => text.includes(number) ||
   (number === ACCOUNTS.meat ? /M\/D/.test(text) : /Highland Roots/i.test(text) && !/M\/D/.test(text));
@@ -120,6 +120,14 @@ export async function switchAccount(page, number, force = false) {
 
   // Each row in the Ship To table opens a "Change Ship To" box when clicked.
   const row = page.locator('tr', { has: page.locator(`td:text-is("${number}")`) }).first();
+  // The list leaves out the account you're already on (since Nov 2026 it shows only
+  // Meat & Dairy while on Produce), so no row while already on it is fine.
+  if (!(await row.count())) {
+    const here = await currentAccountText(page);
+    if (isOn(here, number)) { log(`Already on ${number} (it has no row in the Ship To list)`); return; }
+    await shot(page, `no-row-${number}`);
+    throw new Error(`Customer ${number} isn't in the Ship To list. The page says: ${here.replace(/\s+/g, ' ').slice(0, 200)}`);
+  }
   log(`Ship To row for ${number}: ${(await row.innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 120)}`);
   await row.click();
   const box = page.locator('.modal:visible, [role=dialog]:visible').last();
