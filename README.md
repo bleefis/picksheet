@@ -12,7 +12,7 @@ The weekly ordering app for **Highland Roots Market**. Walk the store with a pho
 |---|---|
 | **Order screen** | One list in the order you walk the store, with this week's Four Seasons prices. Products like *OG Apples* open to show every variety, cheapest first. |
 | **Send** | Emails the order (with the two CSV files) to highlandrootsmkt@gmail.com and starts the cart robot. |
-| **Cart robot** | Loads Produce (94273) and Meat & Dairy (94274) into the carts in about 2 minutes, then emails "Carts loaded" or "Cart problem". **It never submits.** You review and submit on Four Seasons. |
+| **Cart robot** | Loads Produce (94815) and Meat & Dairy (94818) into the carts in about 2 minutes, then emails "Carts loaded" or "Cart problem". **It never submits.** You review and submit on Four Seasons. |
 | **Morning prices** | Every morning from 6:30 AM, prices are pulled from Four Seasons. If they still haven't come in by 10 AM, an email says so. |
 | **Monday email** | "Four Seasons Price Check" lists only the prices that changed since last week, so you can update register prices. |
 | **Setup** | The shared product list. Changes save by themselves and reach every phone. |

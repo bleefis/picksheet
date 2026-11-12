@@ -1,6 +1,6 @@
 // Cart robot: loads a sent order into both Four Seasons carts.
 //
-// For each account with items (Produce 94273, then Meat & Dairy 94274):
+// For each account with items (Produce 94815, then Meat & Dairy 94818):
 //   switch account → note what's already in the cart → Import Order with a CSV
 //   → note obsolete items (the yellow bar) → Add All to Cart → note the cart
 //   afterwards. The import table lasts for the whole sign-in, so the robot signs

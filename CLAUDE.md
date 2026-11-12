@@ -47,7 +47,7 @@ Three parts share one Firebase Realtime Database (project `picksheet-8b2a0`; rul
 
 ## Domain facts the code relies on
 
-- Accounts: Produce = 94273, Meat & Dairy = 94274. Meat & Dairy prices show $0.00 unless that account is selected.
+- Accounts: Produce = 94815 (ship-to 94816), Meat & Dairy = 94818 (ship-to 94819); changed Nov 2026, old 94273/94274 are retired. After sign-in the portal is on Produce, and its Ship To list may show only the Meat & Dairy row. Meat & Dairy prices show $0.00 unless that account is selected.
 - The portal's unit price is per piece in the case, not per pound; $/lb is computed from the pack size in the description.
 - All times are Virginia time (`America/New_York`).
 
